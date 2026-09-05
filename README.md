@@ -18,7 +18,7 @@
 
 ```bat
 md_doc_gui.bat          :: 双击启动 GUI（自动找系统 Python，纯标准库）
-python md_site_builder.py 文档.md --out 输出目录 [--title 站点标题]
+python scripts\md_site_builder.py 文档.md --out 输出目录 [--title 站点标题]
 ```
 
 源码 GUI 采用双模式自适应：解释器能 `import` 生成核心（装了 markdown/pygments）时线程内直接
@@ -40,16 +40,17 @@ python md_site_builder.py 文档.md --out 输出目录 [--title 站点标题]
 
 ```text
 Markpage/
-├─ md_doc_gui.py              图形界面（tkinter，纯标准库）
-├─ md_site_builder.py         生成核心（python-markdown + pygments）
-├─ doc_site_assets.py         站点 CSS/JS（单一事实来源）
-├─ md_doc_gui.bat / md_doc_gui_debug.bat   源码运行启动器
-├─ md_doc_gui.spec            独立版打包配置（PyInstaller）
-├─ build_standalone.bat       一键重建独立版
-├─ assemble_release.py        打包收尾（组装 releases/ + zip）
-├─ pack_usage_说明.txt        独立版内置使用说明
-├─ docs/                      Markpage 自身使用文档与示例（用本工具生成）
-└─ releases/                  ★ 独立发布包（zip + 解压文件夹），拷给别人用
+├─ md_doc_gui.bat / md_doc_gui_debug.bat   源码运行启动器（放仓库根，双击即可）
+├─ build_standalone.bat                    一键重建独立版（也在根）
+├─ pack_usage_说明.txt                     独立版内置使用说明
+├─ docs/                                   Markpage 自身使用文档与示例（用本工具生成）
+├─ releases/                               ★ 独立发布包（zip + 解压文件夹），拷给别人用
+└─ scripts/                                源码与打包脚本
+   ├─ md_doc_gui.py                       图形界面（tkinter，纯标准库）
+   ├─ md_site_builder.py                  生成核心（python-markdown + pygments）
+   ├─ doc_site_assets.py                  站点 CSS/JS（单一事实来源）
+   ├─ md_doc_gui.spec                     独立版打包配置（PyInstaller）
+   └─ assemble_release.py                 打包收尾（组装 releases/ + zip）
 ```
 
 ## 重新构建独立版（维护者）
@@ -69,7 +70,7 @@ build_standalone.bat
 
 ```bat
 DocSiteTool.exe --selftest 某文档.md 某输出目录
-:: 或源码： python md_doc_gui.py --selftest 某文档.md 某输出目录
+:: 或源码： python scripts\md_doc_gui.py --selftest 某文档.md 某输出目录
 ```
 
 结果写入「输出目录上级」的 `_selftest_result.txt`（PASS/FAIL）。

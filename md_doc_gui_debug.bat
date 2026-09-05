@@ -31,7 +31,7 @@ if errorlevel 1 (
 )
 echo Launching GUI (keep this window open; errors appear here)...
 echo ------------------------------------------------------------
-"%PY%" "%~dp0md_doc_gui.py"
+"%PY%" "%~dp0scripts\md_doc_gui.py"
 echo ------------------------------------------------------------
 echo GUI exited with code %errorlevel%.
 echo If nothing appeared above, check tools\gui_error.log.

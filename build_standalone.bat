@@ -38,11 +38,11 @@ if exist "%DIST%" rmdir /s /q "%DIST%"
 echo [3/3] PyInstaller building onedir ...
 "%VPY%" -m PyInstaller --noconfirm --clean ^
   --distpath "%DIST%" --workpath "%WORK%" ^
-  "%~dp0md_doc_gui.spec"
+  "%~dp0scripts\md_doc_gui.spec"
 if errorlevel 1 ( echo [ERROR] PyInstaller failed. & pause & exit /b 1 )
 
 echo [4/4] Assembling releases folder + zip ...
-"%PY311%" "%~dp0assemble_release.py"
+"%PY311%" "%~dp0scripts\assemble_release.py"
 if errorlevel 1 ( echo [ERROR] assemble failed. & pause & exit /b 1 )
 
 echo.

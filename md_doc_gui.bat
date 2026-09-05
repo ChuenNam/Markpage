@@ -28,15 +28,15 @@ if not defined PY (
 )
 
 if defined PYW (
-  start "" "%PYW%" "%~dp0md_doc_gui.py"
+  start "" "%PYW%" "%~dp0scripts\md_doc_gui.py"
   rem give it a moment, then check it is really running
   timeout /t 2 /nobreak >nul
   tasklist /FI "IMAGENAME eq pythonw.exe" | findstr /i "pythonw.exe" >nul
   if errorlevel 1 (
     echo pythonw did not stay alive - retrying with console python.
-    start "" "%PY%" "%~dp0md_doc_gui.py"
+    start "" "%PY%" "%~dp0scripts\md_doc_gui.py"
   )
 ) else (
-  start "" "%PY%" "%~dp0md_doc_gui.py"
+  start "" "%PY%" "%~dp0scripts\md_doc_gui.py"
 )
 endlocal

@@ -1,13 +1,13 @@
 # -*- coding: utf-8 -*-
 """打包收尾（纯 Python，避免 .bat 非 ASCII 在 GBK 代码页乱码）：
 把 PyInstaller 产物 dist/DocSiteTool 组装为 releases/MD文档站生成器/ 并生成 zip。
-用法：python assemble_release.py
+用法：python scripts/assemble_release.py（仓库根为基准）
 """
 import pathlib
 import shutil
 import sys
 
-ROOT = pathlib.Path(__file__).resolve().parent
+ROOT = pathlib.Path(__file__).resolve().parent.parent   # scripts/ 的上一级 = 仓库根
 STAGE = ROOT / "dist" / "DocSiteTool"
 REL = ROOT / "releases" / "MD文档站生成器"
 
