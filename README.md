@@ -31,10 +31,35 @@ python scripts\md_site_builder.py 文档.md --out 输出目录 [--title 站点�
 | 第一个 `# 标题` | 站点标题（其下正文进首页总览区） |
 | 后续每个 `# 一级标题` | 分组（左侧目录的分类抽屉、首页分组卡片） |
 | `## 模块标题` | 一个独立模块页 |
+| `## 标题 {.overview}` | 栏目角色=总览：**不进模块页**，归首页（导语之后、卡片之前；组内则置该分组卡片顶部） |
+| `## 标题 {.appendix}` | 栏目角色=附录：**不进模块页**，归固定附录页（可多个，按文档顺序拼接；可与正文交错） |
 | `### 小节` | 页内栏目（页顶 chips 快捷跳转 + 搜索锚点） |
-| `## 附录…` | 独立附录页，置于目录末尾 |
+| `## 附录…` | 兼容旧约定：无任何角色声明时，首个「附录…」标题至文末整体为附录页（与旧版输出一致） |
+
+> 角色声明优先级：`{.overview}/{.appendix}` 行尾后缀 > GUI/CLI「栏目规则表」> 旧「附录…」前缀约定。
+> 三者均未命中时行为与旧版完全一致（默认不启用 = 零变化）。
 
 生成的站点 = `index.html` + 每模块一页 + 附录 + `search-index.js`（站内搜索）+ `assets/`（图片资源）。
+
+## 站点选项（GUI「站点选项」面板 / CLI 参数；均默认关闭）
+
+| 选项 | 作用 | CLI |
+| --- | --- | --- |
+| 总览表自动链接 | 首页正文表格中**整格文本 == 模块标题**（或别名）的单元格自动变为指向模块页的链接 | `--overview-links` |
+| 栏目规则表 | 给未带后缀的 `##` 声明角色（每行：`标题=overview|appendix`，前缀匹配 `前缀*=…`） | `--route '标题=overview'`（可多次） |
+| 总览表别名 | 一览表「显示名 ≠ 模块页标题」时的映射（每行：`显示名=模块标题`） | `--alias '显示名=模块标题'`（可多次） |
+
+```bat
+:: 示例：带后缀声明的 md + 总览表链接 + 两条别名
+python scripts\md_site_builder.py 文档.md --out out --overview-links ^
+    --alias "StoryView（TMP）=StoryView（TMP 表现层，可选程序集）" ^
+    --alias "DialogueBoxManager（UI）=DialogueBoxManager（UI 程序集）"
+
+:: 示例：用规则表替代 md 后缀（不修改源文档）
+python scripts\md_site_builder.py 文档.md --out out --route "组件总览=overview" --route "附录*=appendix"
+```
+
+GUI 用法：生成前在「站点选项」框勾选 / 填写上述内容即可（填错会弹窗提示，不会开始生成）。
 
 ## 仓库结构
 
@@ -54,26 +79,28 @@ Markpage/
    ├─ rebuild_code_theme_css.py           doc_site_assets 代码块主题段幂等重建
    │                                     （浅色 friendly / 深色 monokai；维护样式用）
    └─ host/
-      └─ build_component_doc_site.py     宿主《组件 API 参考》专用生成器（参数化版）
+      └─ build_component_doc_site.py     宿主《组件 API 参考》站点生成（Markpage 引擎直驱薄包）
 ```
 
 ## 宿主《组件 API 参考》站点
 
-Markpage 引擎之上的文档专属固化器（`# 部件`分组 + `## 类型/契约`模块页 + 总览表自动改链
-+ api-meta + 固定桥接层附录），路径全参数化、渲染复用 Markpage 引擎：
+通用引擎之上的轻量直驱（`scripts/host/build_component_doc_site.py`）：定位宿主 md → 打开总览表
+自动链接 → 注入一览表别名（显示名 ≠ 模块标题的行）→ 其余全部交给通用引擎。宿主 md 源通过
+`{.overview}` / `{.appendix}` 行尾后缀声明栏目角色（2026-09 起，v1 前为固化脚本内嵌 FILEMAP/CELL_LINK）：
 
 ```bat
 :: 指定宿主包根（src/out 自动推导为 组件API参考/组件API参考.md -> 组件API参考/html）
 python scripts\host\build_component_doc_site.py --pkg <宿主包根>
 
-:: 或全手动
+:: 或全手动 / 覆盖别名表
 python scripts\host\build_component_doc_site.py --src a.md --out 某目录
+python scripts\host\build_component_doc_site.py --alias-json 别名.json   :: {显示名: 模块标题}
 ```
 
-可选参数：`--title`（默认 组件 API 参考（业务侧））、`--brand`（默认 MicrobialNet Story）、
-`--filemap` / `--cellmap`（JSON 覆盖模块页文件名映射 / 总览表改链映射）。环境变量
-`MARKPAGE_PKG` 可代替 `--pkg`。
-```
+可选参数：`--title`（默认 组件 API 参考（业务侧））、`--alias-json`、`--no-overview-links`。
+环境变量 `MARKPAGE_PKG` 可代替 `--pkg`。模块页文件名 = 标题 slug（2026-09 起接受全变，
+不再维护固定文件名映射）。
+
 
 ## 重新构建独立版（维护者）
 

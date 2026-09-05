@@ -277,15 +277,32 @@ class AssetCollector:
         return re.sub(r'(<a\b[^>]*?\bhref)="([^"]*)"', rep, body, flags=re.I)
 
 # ---------- 源文档结构解析 ----------
+# 栏目角色（v1 功能，默认不启用 = 行为与旧版完全一致）：
+#   每个 `##` 二级标题可声明角色：module（默认，独立模块页）/ overview（归首页总览区）/
+#   appendix（归固定附录页）。声明方式按优先级：
+#     1) md 行尾属性后缀  `{.overview}` / `{.appendix}`（attr_list 语法，扫描时即剥离出标题文本）；
+#     2) opts.route 规则表（exact / prefix 匹配标题，见 build_model）；
+#     3) 旧约定向后兼容：标题以「附录」开头的 `##` 视为 appendix。
+#   规则 1/2 只要命中任一 → 进入「严格模式」按角色精确归属；否则保持旧行为
+#   （首个「附录…」标题直至文末整体为附录，区间内一切内容吞并）。
 class Heading:
-    __slots__ = ("idx", "level", "title", "clean")
-    def __init__(self, idx, level, title):
+    __slots__ = ("idx", "level", "title", "clean", "role")
+    def __init__(self, idx, level, title, role="module"):
         self.idx = idx
         self.level = level
         self.title = title
         self.clean = clean_title(title)
+        self.role = role          # module | overview | appendix（仅行尾后缀在扫描期赋值）
+
+# 行尾 {…} 属性块（python-markdown attr_list 语法）
+_ATTR_BLOCK = re.compile(r"\s+\{([^{}]*)\}$")
+_CLS_RE = re.compile(r"\.([A-Za-z_][\w-]*)")
 
 def scan_headings(lines):
+    """扫描标题骨架。对带 {.overview}/{.appendix} 后缀的标题行：
+    - 就地改写 lines[i]，把后缀从标题文本剥离（下游 convert 用清洗后文本渲染，锚点/正文一致）；
+    - Heading.role 记下后缀声明角色。
+    其他内容一律不碰（无后缀文档输出与旧版逐字节一致）。"""
     heads = []
     fence = None
     for i, l in enumerate(lines):
@@ -295,13 +312,39 @@ def scan_headings(lines):
             continue
         if fence:
             continue
-        m = re.match(r"^(#{1,3})\s+(.*)$", l)
-        if m:
-            heads.append(Heading(i, len(m.group(1)), m.group(2).strip()))
+        m = re.match(r"^(\s*)(#{1,3})([ \t]+)(.*)$", l)
+        if not m:
+            continue
+        pre, hashes, sp, title = m.group(1), m.group(2), m.group(3), m.group(4).strip()
+        role = "module"
+        am = _ATTR_BLOCK.search(title)
+        if am:
+            classes = [c for c in _CLS_RE.findall(am.group(1))]
+            if "overview" in classes:
+                role = "overview"
+            elif "appendix" in classes:
+                role = "appendix"
+            if role != "module":
+                title = title[:am.start()].rstrip()
+                lines[i] = f"{pre}{hashes}{sp}{title}"
+        heads.append(Heading(i, len(hashes), title, role))
     return heads
 
-def build_model(md_text, doc_title=None):
-    """返回 dict：title / overview(行区间) / groups[{title,start,end,mods[]}] / appendix{start,end} / lines。"""
+def _rule_hit(h, rule):
+    pat = rule.get("title", "")
+    if rule.get("match") == "prefix":
+        return bool(pat) and h.clean.startswith(pat)
+    return h.clean == pat
+
+def build_model(md_text, doc_title=None, route=None):
+    """返回 dict：title / overview(首页导语行区间) / groups[{title,start,end,mods[]}] /
+    mods[{title,start,end,group}] / overview_sections / appendix_sections /
+    appendix(兼容：首条附录节，无则 None) / overview_excludes / strict / lines。
+
+    route：可选栏目规则表 [{title, role:overview|appendix, match:exact|prefix}]，仅作用于
+    未被行尾后缀声明角色的二级标题（行尾后缀优先）。
+    strict = 行尾后缀或规则表任一命中 → 严格模式：角色精确归属，可多总览节/多附录节；
+    否则旧模式：首个「附录…」标题至文末整体为附录（与历史版本逐字节一致）。"""
     lines = md_text.split("\n")
     heads = scan_headings(lines)
     h1s = [h for h in heads if h.level == 1]
@@ -309,47 +352,129 @@ def build_model(md_text, doc_title=None):
     title = clean_title(h1s[0].title) if h1s else (doc_title or "")
     if not title:
         raise ValueError("找不到文档标题：请以 `# 标题` 开头，或在参数里提供 --title")
-    groups, singles = [], None  # singles = 单组模式的模块 h2 列表
-    mod_h2s = list(h2s)
-    # 附录模块（标题以 附录 开头）
-    app_head = next((h for h in mod_h2s if h.clean.startswith("附录")), None)
-    if len(h1s) > 1:                      # 多分组
-        overview = (h1s[0].idx + 1, h1s[1].idx)
-        for k, h in enumerate(h1s[1:]):
-            end = h1s[k + 2].idx if k + 2 < len(h1s) else len(lines)
-            groups.append({"title": h.clean, "start": h.idx + 1, "end": end, "mods": []})
-        for h in mod_h2s:
-            if app_head and h.idx >= app_head.idx:
-                continue
-            g = next((g for g in groups if g["start"] <= h.idx < g["end"]), None)
-            if g:
-                g["mods"].append(h)
-        groups = [g for g in groups if g["mods"]]
-    else:                                 # 无分组（单标题文档）
-        first_h2 = h2s[0].idx if h2s else len(lines)
-        overview = (h1s[0].idx + 1, first_h2)
-        singles = [h for h in h2s if not (app_head and h.idx >= app_head.idx)]
-    # 模块切片终点：同文件内下一个 h2（或更高 h1）前
-    def mod_end(h, allh):
-        for nh in allh:
-            if nh.idx > h.idx and nh.level <= 2:
+
+    for h in h2s:
+        if h.role != "module":
+            continue
+        for r in (route or []):
+            if _rule_hit(h, r):
+                h.role = r.get("role", "module")
+                break
+    strict = any(h.role != "module" for h in h2s)
+    if strict:
+        for h in h2s:
+            if h.role == "module" and h.clean.startswith("附录"):
+                h.role = "appendix"
+
+    first_h2 = h2s[0].idx if h2s else len(lines)
+    region_end = h1s[1].idx if len(h1s) > 1 else first_h2
+    overview = ((h1s[0].idx + 1) if h1s else 0, region_end)
+
+    def next_le2(idx):
+        """idx 之后最近的 h1/h2 行号（h3 不断开小节）。"""
+        for h in heads:
+            if h.idx > idx and h.level <= 2:
+                return h.idx
+        return len(lines)
+
+    def mod_end(h):
+        for nh in h2s:
+            if nh.idx > h.idx:
                 return nh.idx
         return len(lines)
-    mods_all = []
-    if groups:
-        for g in groups:
-            for h in g["mods"]:
-                mods_all.append({"title": h.clean, "start": h.idx, "end": mod_end(h, h2s),
-                                 "group": g["title"]})
+
+    def collect_mods(group_list, mod_h2s, group_of):
+        out = []
+        for h in mod_h2s:
+            out.append({"title": h.clean, "start": h.idx, "end": mod_end(h),
+                        "group": group_of(h) if group_list else ""})
+        return out
+
+    if not strict:
+        # ---- 旧模式：行为与 v1 前完全一致 ----
+        mod_h2s = list(h2s)
+        app_head = next((h for h in mod_h2s if h.clean.startswith("附录")), None)
+        groups, singles = [], None
+        if len(h1s) > 1:
+            for k, h in enumerate(h1s[1:]):
+                end = h1s[k + 2].idx if k + 2 < len(h1s) else len(lines)
+                groups.append({"title": h.clean, "start": h.idx + 1, "end": end, "mods": []})
+            for h in mod_h2s:
+                if app_head and h.idx >= app_head.idx:
+                    continue
+                g = next((g for g in groups if g["start"] <= h.idx < g["end"]), None)
+                if g:
+                    g["mods"].append(h)
+            groups = [g for g in groups if g["mods"]]
+        else:
+            singles = [h for h in h2s if not (app_head and h.idx >= app_head.idx)]
+        group_of = (lambda h: next((g["title"] for g in groups
+                                    if g["start"] <= h.idx < g["end"]), ""))
+        mods_all = []
+        if groups:
+            for g in groups:
+                mods_all.extend(collect_mods(True, g["mods"], group_of))
+        else:
+            mods_all = collect_mods(False, singles or [], group_of)
+        appendix_sections = []
+        if app_head:
+            appendix_sections.append({"title": app_head.clean, "start": app_head.idx,
+                                      "end": len(lines)})
+        overview_sections, overview_excludes, group_intro_end = [], [], {}
     else:
-        for h in singles:
-            mods_all.append({"title": h.clean, "start": h.idx, "end": mod_end(h, h2s),
-                             "group": ""})
-    appendix = None
-    if app_head:
-        appendix = {"title": app_head.clean, "start": app_head.idx, "end": len(lines)}
+        # ---- 严格模式：角色精确归属 ----
+        appendix_h2s = [h for h in h2s if h.role == "appendix"]
+        overview_h2s = [h for h in h2s if h.role == "overview"]
+        mod_h2s = [h for h in h2s if h.role == "module"]
+        groups, singles = [], None
+        if len(h1s) > 1:
+            for k, h in enumerate(h1s[1:]):
+                end = h1s[k + 2].idx if k + 2 < len(h1s) else len(lines)
+                groups.append({"title": h.clean, "start": h.idx + 1, "end": end, "mods": []})
+            for h in mod_h2s:
+                g = next((g for g in groups if g["start"] <= h.idx < g["end"]), None)
+                if g:
+                    g["mods"].append(h)
+            groups = [g for g in groups if g["mods"]]
+        else:
+            singles = list(mod_h2s)
+        group_of = (lambda h: next((g["title"] for g in groups
+                                    if g["start"] <= h.idx < g["end"]), ""))
+        mods_all = []
+        if groups:
+            for g in groups:
+                mods_all.extend(collect_mods(True, g["mods"], group_of))
+        else:
+            mods_all = collect_mods(False, singles or [], group_of)
+        # 附录节：每个 appendix 标题各自切到下一个 h1/h2（可多节、可分散，内容不互吞）
+        appendix_sections = [{"title": h.clean, "start": h.idx, "end": next_le2(h.idx)}
+                             for h in appendix_h2s]
+        # 总览节：首页导语区内的 overview 标题已随导语文本上首页，不重复收集；
+        # 导语区之下（组内/单组正文位）的 overview 标题才需要显式归位到首页/组卡片顶。
+        in_region = lambda h: overview[0] <= h.idx < overview[1]
+        overview_sections = [
+            {"title": h.clean, "start": h.idx, "end": mod_end(h),
+             "group": group_of(h)}
+            for h in overview_h2s if not in_region(h)]
+        # 导语区里若混有附录节（少见）：首页切片须扣掉其区间，避免正文重复上首页
+        overview_excludes = [{"start": s["start"], "end": s["end"]}
+                             for s in appendix_sections
+                             if s["start"] >= overview[0] and s["start"] < overview[1]]
+        # 组卡片导语截断点：组内首个非附录 h2（module/overview），避免导语吞掉节内容
+        group_intro_end = {}
+        for g in groups:
+            first_content = next((h.idx for h in h2s
+                                  if g["start"] <= h.idx < g["end"] and h.role != "appendix"),
+                                 g["end"])
+            group_intro_end[g["title"]] = first_content
+
+    appendix = appendix_sections[0] if appendix_sections else None
     return {"lines": lines, "title": title, "overview": overview,
-            "groups": groups, "mods": mods_all, "appendix": appendix}
+            "groups": groups, "mods": mods_all,
+            "overview_sections": overview_sections,
+            "appendix_sections": appendix_sections,
+            "appendix": appendix, "overview_excludes": overview_excludes,
+            "group_intro_end": group_intro_end, "strict": strict}
 
 def slice_text(model, a, b):
     return "\n".join(model["lines"][a:b]).strip("\n")
@@ -438,12 +563,59 @@ def render_page(model, page_title, current, body_html, prev=None, nxt=None, chip
 </body></html>"""
 
 # ---------- 站点构建 ----------
-def build_site(md_path, out_dir=None, doc_title=None, log=print):
+def _clip(a, b, excl):
+    """把 [a,b) 扣除 excl（[{start,end}…]）里的区间，返回有序切片区间列表。"""
+    segs, cur = [], a
+    for x in sorted(excl, key=lambda e: e["start"]):
+        if x["end"] <= cur or x["start"] >= b:
+            continue
+        if x["start"] > cur:
+            segs.append((cur, x["start"]))
+        cur = max(cur, min(x["end"], b))
+    if cur < b:
+        segs.append((cur, b))
+    return segs
+
+def _cell_link_html(body, target, alias):
+    """首页/总览正文表格的“整格精确匹配”自动链接（opts.overview_links 启用时调用）。
+
+    - target: {模块 clean 标题: 模块文件名}；
+    - alias:  {单元格显示文本: 模块标题}（可选，处理一览表里显示名 ≠ 模块页标题的行）；
+    - 匹配基准 = 单元格去标签后的纯文本（整格比较，不做子串）；单元格原文含 <a> 时跳过。
+    """
+    if not body or not target:
+        return body
+    alias_file = {}
+    for cell_txt, mtitle in (alias or {}).items():
+        if mtitle in target:
+            alias_file[cell_txt] = target[mtitle]
+    def text_of(inner):
+        t = _html.unescape(re.sub(r"<[^>]+>", "", inner))
+        return re.sub(r"\s+", " ", t).strip()
+    def repl(m):
+        if "<a " in m.group(2).lower():
+            return m.group(0)
+        txt = text_of(m.group(2))
+        f = target.get(txt) or alias_file.get(txt)
+        if not f:
+            return m.group(0)
+        return f'{m.group(1)}<a href="{f}">{m.group(2)}</a></td>'
+    return re.sub(r"(<td[^>]*>)(.*?)</td>", repl, body, flags=re.I | re.S)
+
+def build_site(md_path, out_dir=None, doc_title=None, log=print, opts=None):
+    """生成站点。opts（可选 dict，均默认关闭，保持旧行为逐字节一致）：
+      route:          [{title, role:overview|appendix, match:exact|prefix}] 栏目规则表；
+      overview_links: True 时对首页正文表格做整格匹配自动链接模块页；
+      alias:          {单元格显示文本: 模块标题} 总览表别名映射。"""
+    opts = opts or {}
+    route = list(opts.get("route") or [])
+    overview_links = bool(opts.get("overview_links"))
+    alias = dict(opts.get("alias") or {})
     md_path = pathlib.Path(md_path)
     if not md_path.exists():
         raise FileNotFoundError(f"找不到源文档: {md_path}")
     md_text = md_path.read_text(encoding="utf-8")
-    model = build_model(md_text, doc_title)
+    model = build_model(md_text, doc_title, route)
     if doc_title:
         model["title"] = clean_title(doc_title)
     out_dir = pathlib.Path(out_dir) if out_dir else md_path.parent / md_path.stem
@@ -477,33 +649,64 @@ def build_site(md_path, out_dir=None, doc_title=None, log=print):
         body, tok = convert(seg)
         return col.rebase_links(col.rewrite(body)), tok
 
+    def convert_ranges(ranges):
+        parts = []
+        for a, b in ranges:
+            body, _ = convert_seg(a, b)
+            if body:
+                parts.append(body)
+        return "\n".join(parts)
+
     # ---- 首页 ----
-    ov_body, _ = convert_seg(*model["overview"])
+    excls = model["overview_excludes"] or []
+    ov_ranges = _clip(*model["overview"], excls)
+    ov_body = convert_ranges(ov_ranges) if ov_ranges else ""
+    # 全局总览节（组已被折叠/无分组文档的 overview 角色节）：放导语之后、卡片之前
+    extra_top = ""
+    if model["overview_sections"]:
+        kept = {g["title"] for g in model["groups"]}
+        glob = [s for s in model["overview_sections"] if s["group"] not in kept]
+        if glob:
+            extra_top = convert_ranges([(s["start"], s["end"]) for s in glob])
     cards_html = ""
     if model["groups"]:
         for g in model["groups"]:
             gmods = [m for m in model["mods"] if m["group"] == g["title"]]
             if not gmods:
                 continue
-            # 组内导语（组 h1 之后、首模块 h2 之前的文本）
+            # 组内导语：组 h1 之后到组内首个内容标题（overview 节/模块页）之前的文本；
+            # 混在其中的附录节区间扣除，避免与附录页重复
+            intro_b = (model["group_intro_end"].get(g["title"])
+                       if model["strict"] else gmods[0]["start"])
+            g_appx = [s for s in model["appendix_sections"]
+                      if g["start"] <= s["start"] < intro_b]
+            rngs = _clip(g["start"], intro_b, g_appx)
+            seg = "\n".join(slice_text(model, a, b) for a, b in rngs)
             intro = ""
-            seg = slice_text(model, g["start"], gmods[0]["start"])
             if seg.strip() and not seg.strip().startswith("---"):
-                intro = '<div class="part-intro">' + col.rebase_links(col.rewrite(convert(seg)[0])) + "</div>"
+                intro = '<div class="part-intro">' + convert_ranges(rngs) + "</div>"
+            # 组内 overview 角色节 → 组卡片顶部（紧随导语，先于模块卡）
+            g_ovs = [s for s in model["overview_sections"] if s["group"] == g["title"]]
+            ov_html = convert_ranges([(s["start"], s["end"]) for s in g_ovs])
             items = "".join(
                 f'<a class="dir-card" href="{m["file"]}"><h4>{_html.escape(m["title"])}</h4></a>'
                 for m in gmods)
             cards_html += (f'<div class="part-block"><h3>{_html.escape(g["title"])}</h3>{intro}'
-                           f'<div class="dir-grid">{items}</div></div>')
+                           f'{ov_html}<div class="dir-grid">{items}</div></div>')
     else:
         items = "".join(
             f'<a class="dir-card" href="{m["file"]}"><h4>{_html.escape(m["title"])}</h4></a>'
             for m in model["mods"])
         cards_html += f'<div class="dir-grid">{items}</div>'
     if model["appendix"]:
+        _app_title = model["appendix"]["title"]
+        _chip_label = _app_title if _app_title.startswith("附录") else f"附录：{_app_title}"
         cards_html += ('<p style="margin-top:26px"><a class="chip" href="appendix.html">'
-                       f'附录：{_html.escape(model["appendix"]["title"])} →</a></p>')
-    index_body = f'<h1>{_html.escape(model["title"])}</h1>' + ov_body + cards_html
+                       f'{_html.escape(_chip_label)} →</a></p>')
+    index_body = f'<h1>{_html.escape(model["title"])}</h1>' + ov_body + extra_top + cards_html
+    if overview_links and model["mods"]:
+        target = {m["title"]: m["file"] for m in model["mods"]}
+        index_body = _cell_link_html(index_body, target, alias)
     PAGES = {}
     PAGES["index.html"] = render_page(model, model["title"], "index.html", index_body,
                                       crumb="总览", out_meta=out_meta)
@@ -533,9 +736,9 @@ def build_site(md_path, out_dir=None, doc_title=None, log=print):
         PAGES[m["file"]] = out
         (out_dir / m["file"]).write_text(out, encoding="utf-8")
 
-    # ---- 附录页 ----
-    if model["appendix"]:
-        app_body, _ = convert_seg(model["appendix"]["start"], model["appendix"]["end"])
+    # ---- 附录页（可多节，按文档顺序拼接；旧模式=首「附录…」至文末整节）----
+    if model["appendix_sections"]:
+        app_body = convert_ranges([(s["start"], s["end"]) for s in model["appendix_sections"]])
         app_html = render_page(model, model["appendix"]["title"], "appendix.html", app_body,
                                (order[-1]["title"], order[-1]["file"]) if order else None,
                                None, crumb="附录", out_meta=out_meta)
@@ -551,7 +754,7 @@ def build_site(md_path, out_dir=None, doc_title=None, log=print):
     idx = []
     for fname, meta in [("index.html", (model["title"], model["title"]))] + \
                         [(m["file"], (m["title"], m["group"] or model["title"])) for m in order] + \
-                        ([("appendix.html", ("附录", "附录"))] if model["appendix"] else []):
+                        ([("appendix.html", ("附录", "附录"))] if model["appendix_sections"] else []):
         s = PAGES[fname]
         art = re.search(r"<article[^>]*>(.*?)</article>", s, re.S)
         body = art.group(1) if art else ""
@@ -586,7 +789,10 @@ def build_site(md_path, out_dir=None, doc_title=None, log=print):
             "groups": len(model["groups"]) or (1 if model["mods"] else 0),
             "appendix": bool(model["appendix"]), "title": model["title"],
             "index_kb": round(len(js.encode("utf-8")) / 1024),
-            "assets_copied": col.copied, "assets_missing": len(col._missing)}
+            "assets_copied": col.copied, "assets_missing": len(col._missing),
+            "strict": bool(model["strict"]),
+            "overview_sections": len(model["overview_sections"]),
+            "appendix_sections": len(model["appendix_sections"])}
 
 # ---------- CLI ----------
 def main(argv=None):
@@ -594,11 +800,39 @@ def main(argv=None):
     ap.add_argument("md", help="源 Markdown 文件路径")
     ap.add_argument("--out", help="输出目录（默认：源文件同目录/<文件名>）")
     ap.add_argument("--title", help="站点标题（默认取首个 `#` 标题）")
+    ap.add_argument("--overview-links", action="store_true",
+                    help="把首页正文表格里整格精确匹配模块标题（或 --alias 别名）的单元格改为指向模块页的链接")
+    ap.add_argument("--route", action="append", metavar="规则",
+                    help="栏目规则，可多次：`标题=overview` / `标题=appendix`（精确）或 `前缀*=overview` / `前缀*=appendix`")
+    ap.add_argument("--alias", action="append", metavar="映射",
+                    help="总览表别名映射，可多次：`单元格显示文本=模块标题`（配合 --overview-links）")
     a = ap.parse_args(argv)
-    r = build_site(a.md, a.out, a.title)
+    opts = {}
+    if a.route:
+        route = []
+        for spec in a.route:
+            k, sep, role = spec.rpartition("=")
+            if not sep or role not in ("overview", "appendix"):
+                raise SystemExit(f"--route 格式应为 `标题=overview|appendix` 或 `前缀*=overview|appendix`，收到：{spec!r}")
+            if k.endswith("*"):
+                route.append({"title": k[:-1].strip(), "role": role, "match": "prefix"})
+            else:
+                route.append({"title": k.strip(), "role": role, "match": "exact"})
+        opts["route"] = route
+    if a.alias:
+        alias = {}
+        for spec in a.alias:
+            cell, _, mtitle = spec.partition("=")
+            alias[cell.strip()] = mtitle.strip()
+        opts["alias"] = alias
+    if a.overview_links:
+        opts["overview_links"] = True
+    r = build_site(a.md, a.out, a.title, opts=opts)
+    extra = (f" | 严格模式: {r['strict']} | 总览节: {r['overview_sections']} | "
+             f"附录节: {r['appendix_sections']}") if r["strict"] else ""
     print(f"生成: {r['dir']} | 页面: {r['pages']} | 模块: {r['modules']} | "
           f"分组: {r['groups']} | 附录: {r['appendix']} | 索引: {r['index_kb']} KB | "
-          f"资源: 拷贝 {r['assets_copied']} / 缺失 {r['assets_missing']}")
+          f"资源: 拷贝 {r['assets_copied']} / 缺失 {r['assets_missing']}{extra}")
     return r
 
 if __name__ == "__main__":

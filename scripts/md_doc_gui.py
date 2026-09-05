@@ -49,6 +49,55 @@ VENV_PY = next((p for p in VENV_CANDIDATES if p and os.path.isfile(p)), None)
 STYLE = {"pad": 6}
 
 
+# ---------- 站点选项解析（与 md_site_builder CLI 语法一致） ----------
+def parse_route_text(text):
+    """栏目规则文本框 → route 列表 [{title, role, match}]。
+    每行：`标题=overview|appendix`（精确）或 `前缀*=overview|appendix`（前缀）。"""
+    route = []
+    for raw in (text or "").splitlines():
+        line = raw.strip()
+        if not line or line.startswith(("#", "//")):
+            continue
+        k, sep, role = line.rpartition("=")
+        if not sep or role.strip() not in ("overview", "appendix"):
+            raise ValueError(f"栏目规则行应形如 `标题=overview|appendix` 或 `前缀*=…`，收到：{line!r}")
+        k = k.strip()
+        if k.endswith("*"):
+            route.append({"title": k[:-1].strip(), "role": role.strip(), "match": "prefix"})
+        else:
+            route.append({"title": k, "role": role.strip(), "match": "exact"})
+    return route
+
+
+def parse_alias_text(text):
+    """总览表别名文本框 → {显示名: 模块标题}。每行：`显示名=模块标题`。"""
+    alias = {}
+    for raw in (text or "").splitlines():
+        line = raw.strip()
+        if not line or line.startswith(("#", "//")):
+            continue
+        cell, sep, mtitle = line.partition("=")
+        if not sep or not mtitle.strip():
+            raise ValueError(f"别名行应形如 `表格显示名=模块标题`，收到：{line!r}")
+        alias[cell.strip()] = mtitle.strip()
+    return alias
+
+
+def _opts_repr(opts):
+    """站点选项的紧凑可读描述（仅日志展示）。"""
+    parts = []
+    if opts.get("overview_links"):
+        parts.append("总览表自动链接")
+    r = opts.get("route") or []
+    if r:
+        parts.append("规则表: " + "; ".join(
+            f"{x['title']}{'*' if x.get('match') == 'prefix' else ''}={x['role']}" for x in r))
+    a = opts.get("alias") or {}
+    if a:
+        parts.append("别名: " + "; ".join(f"{k}={v}" for k, v in a.items()))
+    return " | ".join(parts) if parts else "（无）"
+
+
 class App(tk.Tk):
     def __init__(self):
         super().__init__()
@@ -92,20 +141,40 @@ class App(tk.Tk):
         ttk.Entry(body, textvariable=self.title_var).grid(
             row=5, column=0, sticky="ew", ipady=2, pady=(0, 10))
 
-        row6 = ttk.Frame(body); row6.grid(row=6, column=0, sticky="w", pady=(0, 6))
-        self.gen_btn = ttk.Button(row6, text="生成站点", command=self.generate, width=14)
+        # ---- 站点选项（v1 功能；全部默认关闭 = 旧版输出）----
+        opt = ttk.LabelFrame(body, text="站点选项（默认关闭，行为与旧版一致；`##` 行尾可加 {.overview} / {.appendix} 声明栏目角色）",
+                             padding=8)
+        opt.grid(row=6, column=0, sticky="ew", pady=(0, 8))
+        self.ov_links_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(
+            opt, variable=self.ov_links_var,
+            text="总览表自动链接：首页正文表格中「整格文本 == 模块标题（或别名）」的单元格自动变为指向模块页的链接"
+        ).grid(row=0, column=0, columnspan=2, sticky="w")
+        ttk.Label(opt, text="栏目规则（每行一条：`标题=overview|appendix`；前缀匹配用 `前缀*=…`）",
+                  foreground="#555").grid(row=1, column=0, sticky="w", pady=(5, 0))
+        ttk.Label(opt, text="总览表别名（每行一条：`表格显示名=模块标题`；配合上方勾选）",
+                  foreground="#555").grid(row=1, column=1, sticky="w", pady=(5, 0), padx=(12, 0))
+        self.route_text = tk.Text(opt, height=3, width=46, font=("Consolas", 9), wrap="none")
+        self.route_text.grid(row=2, column=0, sticky="nsew", pady=(3, 0))
+        self.alias_text = tk.Text(opt, height=3, width=46, font=("Consolas", 9), wrap="none")
+        self.alias_text.grid(row=2, column=1, sticky="nsew", pady=(3, 0), padx=(12, 0))
+        opt.columnconfigure(0, weight=1)
+        opt.columnconfigure(1, weight=1)
+
+        row8 = ttk.Frame(body); row8.grid(row=7, column=0, sticky="w", pady=(0, 6))
+        self.gen_btn = ttk.Button(row8, text="生成站点", command=self.generate, width=14)
         self.gen_btn.pack(side="left")
-        self.open_btn = ttk.Button(row6, text="在浏览器打开", command=self.open_site,
+        self.open_btn = ttk.Button(row8, text="在浏览器打开", command=self.open_site,
                                    width=16, state="disabled")
         self.open_btn.pack(side="left", padx=8)
-        self.hint_var = tk.StringVar(value="说明：`#` 一级标题为分组（首个为站点标题），`##` 每个模块一页，`###` 页内栏目。")
+        self.hint_var = tk.StringVar(value="说明：`#` 一级标题为分组（首个为站点标题），`##` 每个模块一页，`###` 页内栏目；「组件总览/附录」等栏目标记后归首页/附录页。")
         ttk.Label(body, textvariable=self.hint_var, foreground="#888").grid(
-            row=7, column=0, sticky="w", pady=(0, 2))
+            row=8, column=0, sticky="w", pady=(0, 2))
 
         self.log = scrolledtext.ScrolledText(body, height=14, state="disabled",
                                              font=("Consolas", 10))
-        self.log.grid(row=8, column=0, sticky="nsew", pady=(8, 0))
-        body.rowconfigure(8, weight=1)
+        self.log.grid(row=9, column=0, sticky="nsew", pady=(8, 0))
+        body.rowconfigure(9, weight=1)
 
         self._busy = False
 
@@ -181,20 +250,37 @@ class App(tk.Tk):
                                  parent=self)
             return
         title = self.title_var.get().strip()   # 主线程读 tk 变量，只把值交给子线程
+        # 站点选项（同样主线程读文本/勾选并解析，校验失败即中止）
+        opts = {}
+        try:
+            if self.ov_links_var.get():
+                opts["overview_links"] = True
+            if self.route_text.get("1.0", "end-1c").strip():
+                opts["route"] = parse_route_text(self.route_text.get("1.0", "end-1c"))
+            if self.alias_text.get("1.0", "end-1c").strip():
+                opts["alias"] = parse_alias_text(self.alias_text.get("1.0", "end-1c"))
+        except ValueError as e:
+            messagebox.showwarning("站点选项格式错误", str(e), parent=self)
+            return
         self._set_busy(True)
-        threading.Thread(target=self._run_build, args=(md, out, title), daemon=True).start()
+        threading.Thread(target=self._run_build, args=(md, out, title, opts), daemon=True).start()
 
-    def _run_build(self, md, out, title):
+    def _run_build(self, md, out, title, opts):
         """子线程执行构建；UI 一律经 _log/_post 队列回流主线程。"""
         if _EMBED:
             self._log("> 内嵌模式：build_site()（markdown/pygments 已随本程序内置）")
             self._log(f"  源: {md}")
             self._log(f"  输出: {out}")
+            if opts:
+                self._log("  站点选项: " + _opts_repr(opts))
             try:
-                r = _builder.build_site(md, out, title or None, log=self._log)
+                r = _builder.build_site(md, out, title or None, log=self._log, opts=opts or None)
                 self._log(f"生成: {r['dir']} | 页面: {r['pages']} | 模块: {r['modules']} | "
                           f"分组: {r['groups']} | 附录: {r['appendix']} | 索引: {r['index_kb']} KB | "
                           f"资源: 拷贝 {r['assets_copied']} / 缺失 {r['assets_missing']}")
+                if r["strict"]:
+                    self._log(f"  栏目角色: 严格模式（总览节 {r['overview_sections']} / "
+                              f"附录节 {r['appendix_sections']}）")
                 ok = True
             except Exception as e:  # noqa: BLE001
                 import traceback
@@ -205,6 +291,13 @@ class App(tk.Tk):
             cmd = [VENV_PY, BUILDER, md, "--out", out]
             if title:
                 cmd += ["--title", title]
+            if opts.get("overview_links"):
+                cmd += ["--overview-links"]
+            for r in opts.get("route") or []:
+                k = r["title"] + ("*" if r.get("match") == "prefix" else "")
+                cmd += ["--route", f"{k}={r['role']}"]
+            for cell, mtitle in (opts.get("alias") or {}).items():
+                cmd += ["--alias", f"{cell}={mtitle}"]
             if VENV_PY is None:
                 self._log("!! 未找到带 markdown/pygments 的 python（内嵌不可用且无 venv），无法生成。")
                 ok = False

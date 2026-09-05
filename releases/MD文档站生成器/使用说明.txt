@@ -41,4 +41,5 @@ MD 文档站生成器 · 独立版说明
   A: 能。本站点目录与电脑无关，随时双击 exe 重新生成。
 
 六、重新打包（维护者用，一般用户忽略）
-  在开发机执行 tools\build_standalone.bat 即可重新产出本文件夹。
+  在开发机双击 build_standalone.bat 即可重新产出本文件夹
+  （产物在仓库根 releases\ 目录）。
