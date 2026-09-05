@@ -51,8 +51,28 @@ Markpage/
    ├─ doc_site_assets.py                  站点 CSS/JS（单一事实来源）
    ├─ md_doc_gui.spec                     独立版打包配置（PyInstaller）
    ├─ assemble_release.py                 打包收尾（组装 releases/ + zip）
-   └─ rebuild_code_theme_css.py           doc_site_assets 代码块主题段幂等重建
-                                         （浅色 friendly / 深色 monokai；维护样式用）
+   ├─ rebuild_code_theme_css.py           doc_site_assets 代码块主题段幂等重建
+   │                                     （浅色 friendly / 深色 monokai；维护样式用）
+   └─ host/
+      └─ build_component_doc_site.py     宿主《组件 API 参考》专用生成器（参数化版）
+```
+
+## 宿主《组件 API 参考》站点
+
+Markpage 引擎之上的文档专属固化器（`# 部件`分组 + `## 类型/契约`模块页 + 总览表自动改链
++ api-meta + 固定桥接层附录），路径全参数化、渲染复用 Markpage 引擎：
+
+```bat
+:: 指定宿主包根（src/out 自动推导为 组件API参考/组件API参考.md -> 组件API参考/html）
+python scripts\host\build_component_doc_site.py --pkg <宿主包根>
+
+:: 或全手动
+python scripts\host\build_component_doc_site.py --src a.md --out 某目录
+```
+
+可选参数：`--title`（默认 组件 API 参考（业务侧））、`--brand`（默认 MicrobialNet Story）、
+`--filemap` / `--cellmap`（JSON 覆盖模块页文件名映射 / 总览表改链映射）。环境变量
+`MARKPAGE_PKG` 可代替 `--pkg`。
 ```
 
 ## 重新构建独立版（维护者）

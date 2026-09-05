@@ -260,16 +260,10 @@ class AssetCollector:
         （旧用法/任意输出目录）时不做改写，维持原行为。"""
         if not body:
             return body
-        rel = self.out_dir.relative_to(self.md_dir) if self.out_dir else None
-        try:
-            if rel is None:
-                rel = self.out_dir.relative_to(self.md_dir)
-        except Exception:
-            pass
         try:
             rel = self.out_dir.relative_to(self.md_dir)
         except ValueError:
-            return body  # out_dir 不在 md_dir 之下
+            return body  # out_dir 不在 md_dir 之下（任意输出目录/旧用法：不做改写）
         if not rel.parts:
             return body  # out_dir == md_dir
         prefix = "../" * len(rel.parts)
