@@ -1,2 +1,9 @@
 # Auto detect text files and perform LF normalization
 * text=auto
+
+# Release binaries: never let git touch line endings
+*.exe binary
+*.dll binary
+*.pyd binary
+*.pyc binary
+*.zip binary
