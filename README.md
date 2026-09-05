@@ -50,7 +50,9 @@ Markpage/
    ├─ md_site_builder.py                  生成核心（python-markdown + pygments）
    ├─ doc_site_assets.py                  站点 CSS/JS（单一事实来源）
    ├─ md_doc_gui.spec                     独立版打包配置（PyInstaller）
-   └─ assemble_release.py                 打包收尾（组装 releases/ + zip）
+   ├─ assemble_release.py                 打包收尾（组装 releases/ + zip）
+   └─ rebuild_code_theme_css.py           doc_site_assets 代码块主题段幂等重建
+                                         （浅色 friendly / 深色 monokai；维护样式用）
 ```
 
 ## 重新构建独立版（维护者）
