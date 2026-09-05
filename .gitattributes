@@ -7,3 +7,6 @@
 *.pyd binary
 *.pyc binary
 *.zip binary
+
+# .bat must stay CRLF + ASCII for cmd.exe on Chinese Windows
+*.bat text eol=crlf
