@@ -1,0 +1,16 @@
+# --- Python ---
+__pycache__/
+*.pyc
+*.pyo
+
+# --- PyInstaller 工作产物（可一键重建，见 build_standalone.bat）---
+dist/
+build/
+.tmp_pyi/
+
+# --- 打包 venv 若建在仓库内则忽略（默认建在用户目录，不涉及）---
+.venv/
+
+# --- 编辑器 ---
+.vscode/
+.idea/
