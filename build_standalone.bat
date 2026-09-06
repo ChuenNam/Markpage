@@ -32,8 +32,8 @@ if not exist "%VPY%" (
   "%PY311%" -m venv "%VDIR%"
   if errorlevel 1 ( echo [ERROR] venv create failed. & pause & exit /b 1 )
 )
-echo [2/3] Ensuring deps markdown pygments pyinstaller...
-"%VPY%" -m pip install --quiet --disable-pip-version-check markdown pygments pyinstaller
+echo [2/3] Ensuring deps markdown pygments pyinstaller tkinterdnd2...
+"%VPY%" -m pip install --quiet --disable-pip-version-check markdown pygments pyinstaller tkinterdnd2
 if errorlevel 1 ( echo [ERROR] pip install failed. & pause & exit /b 1 )
 
 set "DIST=%~dp0dist"

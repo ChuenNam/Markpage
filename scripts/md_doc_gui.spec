@@ -9,6 +9,15 @@
 #   - pygments 词法器由官方 hook 收集，无需额外配置；
 #   - pathex 基于 SPECPATH（spec 所在目录），仓库可整体移动，无需改路径。
 
+#   - 拖放依赖 tkinterdnd2（可选）：collect_all 收集 tkdnd 原生库与 Tcl 资源；
+#     打包环境未安装该包时为空 → 产物无拖放，GUI 自动降级为仅“浏览…”按钮。
+
+try:
+    from PyInstaller.utils.hooks import collect_all
+    _dnd_datas, _dnd_bins, _dnd_hids = collect_all("tkinterdnd2")
+except Exception:
+    _dnd_datas, _dnd_bins, _dnd_hids = [], [], []
+
 hiddenimports = [
     "md_site_builder",
     "doc_site_assets",
@@ -25,9 +34,9 @@ hiddenimports = [
 a = Analysis(
     ["md_doc_gui.py"],
     pathex=[SPECPATH],
-    binaries=[],
-    datas=[],
-    hiddenimports=hiddenimports,
+    binaries=_dnd_bins,
+    datas=_dnd_datas,
+    hiddenimports=hiddenimports + _dnd_hids,
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],

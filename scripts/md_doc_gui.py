@@ -2,7 +2,9 @@
 """Markpage —— 图形界面（把任意 Markdown 一键生成为多页 HTML 文档站）。
 
 架构（壳与生成核心分层）:
-  - 本文件只需 tkinter（标准库），用系统 Python 直接双击运行（见同目录 .bat 启动器）；
+  - 界面基础只需 tkinter（标准库），用系统 Python 直接双击运行（见同目录 .bat 启动器）；
+    文件拖放为可选增强：装了 tkinterdnd2 即可把 .md / 文件夹直接拖入窗口
+    （独立版 exe 已内置；缺库时自动降级为仅“浏览…”按钮，不影响其它功能）；
   - 真正的生成核心是 md_site_builder.py，需要 python-markdown + pygments；
   - 双运行模式（自适应）：
       ① 内嵌模式：若当前解释器能 import md_site_builder（即 markdown/pygments 可用，
@@ -27,6 +29,15 @@ import subprocess
 import webbrowser
 import tkinter as tk
 from tkinter import ttk, filedialog, scrolledtext, messagebox
+
+# 文件拖放（可选增强）：装有 tkinterdnd2 即启用 OS 级拖放，否则降级为仅“浏览…”
+try:
+    from tkinterdnd2 import TkinterDnD, DND_FILES  # noqa: F401
+    _DND = True
+except Exception:  # noqa: BLE001
+    TkinterDnD = None
+    DND_FILES = None
+    _DND = False
 
 TOOLS = os.path.dirname(os.path.abspath(__file__))
 BUILDER = os.path.join(TOOLS, "md_site_builder.py")
@@ -98,13 +109,20 @@ def _opts_repr(opts):
     return " | ".join(parts) if parts else "（无）"
 
 
-class App(tk.Tk):
+class App(TkinterDnD.Tk if _DND else tk.Tk):
     def __init__(self):
+        if _DND and sys.platform == "win32" and not os.environ.get("PROCESSOR_ARCHITECTURE"):
+            # 受限环境可能缺 PROCESSOR_ARCHITECTURE → tkinterdnd2 平台判定会失败；
+            # 按解释器位数补一个（正常桌面双击登录环境自带该变量，不会走到这里）
+            import struct
+            os.environ["PROCESSOR_ARCHITECTURE"] = "AMD64" if struct.calcsize("P") * 8 == 64 else "x86"
         super().__init__()
         self.title("Markpage（MD 网页文档生成器）")
         self.geometry("820x600")
         self.minsize(680, 460)
         self._build_ui()
+        if _DND:
+            self._setup_drop()
         # 跨线程回调队列：子线程只往队列放任务，主线程轮询执行，避免直接跨线程调 tkinter
         self._q = queue.Queue()
         self.after(120, self._poll_queue)
@@ -121,7 +139,8 @@ class App(tk.Tk):
         body = ttk.Frame(self, padding=14)
         body.pack(fill="both", expand=True)
 
-        ttk.Label(body, text="源 Markdown 文件 *", font=("", 10, "bold")).grid(
+        ttk.Label(body, text="源 Markdown 文件 *（可把 .md / 文件夹直接拖进窗口）",
+                  font=("", 10, "bold")).grid(
             row=0, column=0, sticky="w", pady=(0, 2))
         row1 = ttk.Frame(body); row1.grid(row=1, column=0, sticky="ew", pady=(0, 8))
         body.columnconfigure(0, weight=1)
@@ -179,12 +198,8 @@ class App(tk.Tk):
         self._busy = False
 
     # ---------- 交互 ----------
-    def pick_md(self):
-        p = filedialog.askopenfilename(
-            title="选择源 Markdown", filetypes=[("Markdown", "*.md"), ("所有文件", "*.*")],
-            initialdir=os.path.expanduser("~"))
-        if not p:
-            return
+    def set_md_source(self, p):
+        """选定一份 .md：填源路径，并按惯例自动推导输出目录与站点标题。"""
         self.md_var.set(p)
         # 默认输出：同目录/<文件名>；默认标题：首 # 标题
         out = os.path.join(os.path.dirname(p), os.path.splitext(os.path.basename(p))[0])
@@ -197,10 +212,53 @@ class App(tk.Tk):
         except OSError:
             pass
 
+    def pick_md(self):
+        p = filedialog.askopenfilename(
+            title="选择源 Markdown", filetypes=[("Markdown", "*.md"), ("所有文件", "*.*")],
+            initialdir=os.path.expanduser("~"))
+        if p:
+            self.set_md_source(p)
+
     def pick_out(self):
         p = filedialog.askdirectory(title="选择输出目录")
         if p:
             self.out_var.set(p)
+
+    # ---------- 文件拖放（tkinterdnd2，可选） ----------
+    def _setup_drop(self):
+        """把整窗所有控件都注册为拖放目标（拖到窗口任意位置都可接收）。"""
+        def walk(w):
+            try:
+                w.drop_target_register(DND_FILES)
+                w.dnd_bind("<<Drop>>", self._on_drop)
+            except Exception:  # noqa: BLE001
+                pass
+            for c in w.winfo_children():
+                walk(c)
+        walk(self)
+
+    def _on_drop(self, event):
+        """拖放处理：.md → 填源（自动推导输出/标题）；文件夹 → 填输出目录。"""
+        try:
+            paths = self.tk.splitlist(event.data)
+        except Exception:  # noqa: BLE001
+            paths = [event.data]
+        if len(paths) != 1 or not paths[0]:
+            messagebox.showinfo("拖放提示", "一次请拖入一个 .md 文件或一个文件夹。", parent=self)
+            return
+        # tkdnd 在 Windows 传 '/'-分隔路径；splitlist 会把 '\' 当转义吞掉，故统一 normpath
+        p = os.path.normpath(str(paths[0]).strip().strip('"'))
+        if os.path.isdir(p):
+            self.out_var.set(p)
+            self._append_log(f"输出目录已设为（拖放）: {p}")
+        elif p.lower().endswith((".md", ".markdown")):
+            self.set_md_source(p)
+            self._append_log(f"源文件已设为（拖放）: {p}")
+        else:
+            messagebox.showinfo(
+                "拖放提示",
+                "支持：\n· 拖入 .md 文件 → 填入源 Markdown（自动推导输出目录与标题）\n"
+                "· 拖入文件夹 → 填入输出目录", parent=self)
 
     def _append_log(self, line):
         self.log.configure(state="normal")

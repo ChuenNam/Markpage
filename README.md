@@ -24,6 +24,10 @@ python scripts\md_site_builder.py 文档.md --out 输出目录 [--title 站点�
 源码 GUI 采用双模式自适应：解释器能 `import` 生成核心（装了 markdown/pygments）时线程内直接
 调用；否则自动退回用仓库 venv 的 python 以子进程执行（需先 `pip install markdown pygments`）。
 
+文件拖放（可选）：装了 `tkinterdnd2` 即可把 `.md` / 文件夹**直接拖进窗口**——拖 `.md` 自动填源
+与输出目录/标题，拖文件夹填输出目录。独立版 exe 已内置；源码路径 `pip install tkinterdnd2` 后生效，
+缺库时自动降级（界面照常，仅无拖放）。
+
 ## 支持的 md 标题规则（决定站点结构）
 
 | md 写法 | 站点效果 |
@@ -71,7 +75,7 @@ Markpage/
 ├─ docs/                                   Markpage 自身使用文档与示例（用本工具生成）
 ├─ releases/                               ★ 独立发布包（zip + 解压文件夹），拷给别人用
 └─ scripts/                                源码与打包脚本
-   ├─ md_doc_gui.py                       图形界面（tkinter，纯标准库）
+   ├─ md_doc_gui.py                       图形界面（tkinter，纯标准库；拖放可选 tkinterdnd2）
    ├─ md_site_builder.py                  生成核心（python-markdown + pygments）
    ├─ doc_site_assets.py                  站点 CSS/JS（单一事实来源）
    ├─ md_doc_gui.spec                     独立版打包配置（PyInstaller）
