@@ -1,7 +1,7 @@
 # -*- mode: python ; coding: utf-8 -*-
-# PyInstaller 打包配置：把 MD 文档站生成器（GUI + 生成核心）打成单文件夹独立 exe。
+# PyInstaller 打包配置：把 Markpage（GUI + 生成核心）打成单文件夹独立 exe。
 # 用法：<打包venv python> -m PyInstaller --noconfirm --clean --distpath <dist> --workpath <tmp> md_doc_gui.spec
-# 产物：<dist>/DocSiteTool/DocSiteTool.exe（双击即用，目标电脑无需安装 Python）。
+# 产物：<dist>/Markpage/Markpage.exe（双击即用，目标电脑无需安装 Python）。
 # 说明：
 #   - GUI 已做“内嵌模式”：exe 内自带 markdown/pygments，直接线程内调用 build_site()，
 #     不再依赖任何外部 .py / venv；
@@ -42,7 +42,7 @@ exe = EXE(
     a.scripts,
     [],
     exclude_binaries=True,
-    name="DocSiteTool",
+    name="Markpage",
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
@@ -61,5 +61,5 @@ coll = COLLECT(
     a.datas,
     strip=False,
     upx=False,
-    name="DocSiteTool",
+    name="Markpage",
 )

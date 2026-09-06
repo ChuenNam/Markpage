@@ -9,8 +9,8 @@
 
 **普通用户（用独立版）**
 
-1. 取 `releases/MD文档站生成器.zip`（或整个 `releases/MD文档站生成器/` 文件夹）拷贝到任意 Windows 电脑；
-2. 解压后双击 `DocSiteTool.exe`；
+1. 取 `releases/Markpage.zip`（或整个 `releases/Markpage/` 文件夹）拷贝到任意 Windows 电脑；
+2. 解压后双击 `Markpage.exe`；
 3. 选一份 `.md` → 生成站点 → 日志显示「生成完成 ✔」后点【在浏览器打开】。
    （使用细节见独立版内置 `使用说明.txt`）
 
@@ -111,14 +111,14 @@ build_standalone.bat
 ```
 
 脚本会自动：建打包 venv → 装 markdown/pygments/pyinstaller → PyInstaller 打 onedir →
-组装 `releases/MD文档站生成器/` 与 `.zip`。环境变量 `MARKPAGE_PY311` 可指定 Python 路径。
+组装 `releases/Markpage/` 与 `Markpage.zip`。环境变量 `MARKPAGE_PY311` 可指定 Python 路径。
 
 ## 无头自检
 
 验证依赖与代码是否完整（打包后尤其有用）：
 
 ```bat
-DocSiteTool.exe --selftest 某文档.md 某输出目录
+Markpage.exe --selftest 某文档.md 某输出目录
 :: 或源码： python scripts\md_doc_gui.py --selftest 某文档.md 某输出目录
 ```
 

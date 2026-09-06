@@ -1,8 +1,8 @@
 @echo off
 rem ============================================================
 rem  Markpage - build standalone Windows package one-click
-rem  Output: releases\ folder Chinese-named by assemble_release.py
-rem          + releases\*.zip ; run DocSiteTool.exe from either.
+rem  Output: releases\Markpage folder + Markpage.zip by assemble_release.py
+rem          run Markpage.exe from either.
 rem
 rem  IMPORTANT: keep this file 100% ASCII and CRLF line endings.
 rem  cmd.exe parses .bat as ANSI/GBK on Chinese Windows; any UTF-8
@@ -51,7 +51,7 @@ echo [4/4] Assembling releases folder + zip ...
 if errorlevel 1 ( echo [ERROR] assemble failed. & pause & exit /b 1 )
 
 echo.
-echo Done. See the releases folder (Chinese-named) and its .zip.
-echo Copy either one to any Windows PC and run DocSiteTool.exe
+echo Done. See the releases folder (Markpage) and its zip.
+echo Copy either one to any Windows PC and run Markpage.exe
 endlocal
 pause

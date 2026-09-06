@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""MD 文档站生成器 —— 图形界面（把任意 Markdown 一键生成为多页 HTML 文档站）。
+"""Markpage —— 图形界面（把任意 Markdown 一键生成为多页 HTML 文档站）。
 
 架构（壳与生成核心分层）:
   - 本文件只需 tkinter（标准库），用系统 Python 直接双击运行（见同目录 .bat 启动器）；
@@ -101,7 +101,7 @@ def _opts_repr(opts):
 class App(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title("MD 文档站生成器（通用）")
+        self.title("Markpage（MD 网页文档生成器）")
         self.geometry("820x600")
         self.minsize(680, 460)
         self._build_ui()

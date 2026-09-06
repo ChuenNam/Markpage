@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""通用 md -> 多页文档站生成器（供任意 Markdown 文档使用，GUI/CLI 共用核心）。
+"""Markpage 引擎 —— 通用 md -> 多页文档站生成器（供任意 Markdown 文档使用，GUI/CLI 共用核心）。
 
 用法（命令行）:
   python md_site_builder.py 某文档.md [--out 输出目录] [--title 站点标题]
@@ -800,7 +800,7 @@ def build_site(md_path, out_dir=None, doc_title=None, log=print, opts=None):
 
 # ---------- CLI ----------
 def main(argv=None):
-    ap = argparse.ArgumentParser(description="通用 Markdown 多页文档站生成器")
+    ap = argparse.ArgumentParser(description="Markpage：通用 Markdown 多页文档站生成器")
     ap.add_argument("md", help="源 Markdown 文件路径")
     ap.add_argument("--out", help="输出目录（默认：源文件同目录/<文件名>）")
     ap.add_argument("--title", help="站点标题（默认取首个 `#` 标题）")
