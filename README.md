@@ -43,7 +43,8 @@ python scripts\md_site_builder.py 文档.md --out 输出目录 [--title 站点�
 > 角色声明优先级：`{.overview}/{.appendix}` 行尾后缀 > GUI/CLI「栏目规则表」> 旧「附录…」前缀约定。
 > 三者均未命中时行为与旧版完全一致（默认不启用 = 零变化）。
 
-生成的站点 = `index.html` + 每模块一页 + 附录 + `search-index.js`（站内搜索）+ `assets/`（图片资源）。
+生成的站点 = `index.html` + 每模块一页 + 附录 + `site.css`/`site.js`（全站样式与交互，
+**外链一次**，页面只引用不内联，多模块站点体积不随页数重复膨胀）+ `search-index.js`（站内搜索）+ `assets/`（图片资源）。
 
 ## 站点选项（GUI「站点选项」面板 / CLI 参数；均默认关闭）
 

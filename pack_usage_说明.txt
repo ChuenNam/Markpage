@@ -21,6 +21,7 @@ Markpage · 独立版说明
   - index.html         首页总览
   - 每模块一个 .html    正文页
   - appendix.html      附录页（如有）
+  - site.css / site.js 全站样式与交互（外链一次，页面只引用，不逐页重复）
   - search-index.js    站内搜索数据
   - assets/            文档里的图片等资源
 

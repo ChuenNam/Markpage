@@ -15,7 +15,8 @@
   - `### 小节`                -> 模块页内栏目（页顶 chips + 搜索锚点）；
   - 无任何角色声明时保持旧行为：标题以「附录」开头的 `##` 从首个起直至文末整体为附录页；
     有任一角色声明则进入严格模式按角色精确归属（默认不启用 = 输出与旧版逐字节一致）。
-  - 生成的站点 = 输出目录/index.html + 每模块一页 + 附录 + search-index.js（顶栏搜索数据源），
+  - 生成的站点 = 输出目录/index.html + 每模块一页 + 附录 + site.css/site.js（全站样式与
+    交互，外链一次、不再逐页内联）+ search-index.js（顶栏搜索数据源），
     含左侧目录（分组收缩抽屉）、深浅主题、跨页搜索、上一页/下一页。
 
 样式与交互（CSS/JS）统一来自同目录 doc_site_assets.py（单一事实来源，与组件 API 参考站点共用）。
@@ -539,7 +540,7 @@ def render_page(model, page_title, current, body_html, prev=None, nxt=None, chip
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="generator" content="MicrobialNet Story">
 <title>{_html.escape(page_title)} · {_html.escape(model["title"])}</title>
-<style>{CSS}</style>
+<link rel="stylesheet" href="site.css">
 <script src="search-index.js"></script></head>
 <body>
 <div class="topbar">
@@ -563,7 +564,7 @@ def render_page(model, page_title, current, body_html, prev=None, nxt=None, chip
 <p class="foot">生成于 {SITE_DATE}</p>
 </article></main>
 </div>
-<script>{JS}</script>
+<script src="site.js"></script>
 </body></html>"""
 
 # ---------- 站点构建 ----------
@@ -628,11 +629,18 @@ def build_site(md_path, out_dir=None, doc_title=None, log=print, opts=None):
     if out_dir.exists():
         for f in out_dir.glob("*.html"):
             f.unlink()
-        (out_dir / "search-index.js").unlink(missing_ok=True)
+        # 站点级资产（site.css/site.js 为外链一次的全站样式/脚本）随本站一起清理，
+        # 避免旧版内联产物切换后残留；非本站文件一律保留。
+        for f in ("site.css", "site.js", "search-index.js"):
+            (out_dir / f).unlink(missing_ok=True)
         import shutil as _sh
         if (out_dir / "assets").is_dir():
             _sh.rmtree(out_dir / "assets")
     out_dir.mkdir(parents=True, exist_ok=True)
+    # 全站样式与交互资产写成站点级文件，页面仅外链引用（file:// 下 link/script 相对
+    # 引用可用）；多页站点避免每页重复内联 CSS/JS。
+    (out_dir / "site.css").write_text('@charset "utf-8";\n' + CSS, encoding="utf-8")
+    (out_dir / "site.js").write_text(JS, encoding="utf-8")
     col = AssetCollector(md_path.parent, out_dir, log)
 
     # 模块文件名（slug 唯一化）
