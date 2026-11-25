@@ -383,10 +383,9 @@ def build_model(md_text, doc_title=None, route=None):
         return len(lines)
 
     def mod_end(h):
-        for nh in h2s:
-            if nh.idx > h.idx:
-                return nh.idx
-        return len(lines)
+        # 到下一个 h1/h2 为止。只找下一个 `##` 的话，组内最后一个模块会把
+        # 下一个分组的 `# 分组名` 一起吞进自己的页面（页尾多出一个无关大标题）。
+        return next_le2(h.idx)
 
     def collect_mods(group_list, mod_h2s, group_of):
         out = []
@@ -410,7 +409,9 @@ def build_model(md_text, doc_title=None, route=None):
                 g = next((g for g in groups if g["start"] <= h.idx < g["end"]), None)
                 if g:
                     g["mods"].append(h)
-            groups = [g for g in groups if g["mods"]]
+            # 不丢弃「没有模块页」的分组：它可能仍带着导语或组内总览节，
+            # 丢掉会把组标题+导语整段从首页抹掉，组内总览还会被误判成全篇总览。
+            # 是否真的渲染由 build_site 判断（标题/导语/总览/卡片全空才跳过）。
         else:
             singles = [h for h in h2s if not (app_head and h.idx >= app_head.idx)]
         group_of = (lambda h: next((g["title"] for g in groups
@@ -440,7 +441,7 @@ def build_model(md_text, doc_title=None, route=None):
                 g = next((g for g in groups if g["start"] <= h.idx < g["end"]), None)
                 if g:
                     g["mods"].append(h)
-            groups = [g for g in groups if g["mods"]]
+            # 同非严格模式：保留没有模块页的分组，由 build_site 决定是否渲染
         else:
             singles = list(mod_h2s)
         group_of = (lambda h: next((g["title"] for g in groups
@@ -458,7 +459,9 @@ def build_model(md_text, doc_title=None, route=None):
         # 导语区之下（组内/单组正文位）的 overview 标题才需要显式归位到首页/组卡片顶。
         in_region = lambda h: overview[0] <= h.idx < overview[1]
         overview_sections = [
-            {"title": h.clean, "start": h.idx, "end": mod_end(h),
+            # 区间到「下一个 h1/h2」为止：用 mod_end 只找下一个 `##`，
+            # 组内最后一个总览节会把后面的整个分组（含下一个 `#`）吞进首页。
+            {"title": h.clean, "start": h.idx, "end": next_le2(h.idx),
              "group": group_of(h)}
             for h in overview_h2s if not in_region(h)]
         # 导语区里若混有附录节（少见）：首页切片须扣掉其区间，避免正文重复上首页
@@ -488,12 +491,14 @@ def slice_text(model, a, b):
 def make_nav(model, current, mods):
     """mods: [{title,file,group}]；index 固定 index.html。"""
     home = _html.escape(model["title"])
-    groups = []   # [{title, items:[(title,file)]}]
+    groups = []   # [{title, items:[(title,file)], home}]
+    gfiles = model.get("group_files") or {}
     if model["groups"]:
         for g in model["groups"]:
             items = [(m["title"], m["file"]) for m in mods if m["group"] == g["title"]]
             if items:
-                groups.append({"title": g["title"], "items": items})
+                groups.append({"title": g["title"], "items": items,
+                               "home": gfiles.get(g["title"], "")})
     else:
         items = [(m["title"], m["file"]) for m in mods]
         groups.append({"title": "", "items": items})
@@ -505,9 +510,13 @@ def make_nav(model, current, mods):
         return f'<li><a class="toc-link{active}" href="{file}">{_html.escape(title)}</a></li>'
     groups_html = []
     for gi, g in enumerate(groups):
-        active_here = any(f == current for _, f in g["items"])
+        home_f = g.get("home") or ""
+        active_here = any(f == current for _, f in g["items"]) or home_f == current
         open_attr = " open" if active_here else ""
         lis = "".join(item(t, f) for t, f in g["items"])
+        if home_f:
+            cls = "toc-link toc-glink" + (" active" if home_f == current else "")
+            lis = f'<li><a class="{cls}" href="{home_f}">概览</a></li>' + lis
         # 单组模式：组即全文，平铺不折叠
         if len(groups) == 1 and not g["title"]:
             groups_html.append(f"<ul>{lis}</ul>")
@@ -581,6 +590,25 @@ def _clip(a, b, excl):
         segs.append((cur, b))
     return segs
 
+def _spans(ranges, nlines):
+    """[(a,b) 0-based 半开区间] → [[起,止] 1-based 闭区间]，相邻/重叠自动合并。
+
+    给界面用：预览某页时，编辑器里要把「贡献了这一页的源行」涂底色。"""
+    out = []
+    for a, b in sorted(ranges or []):
+        try:
+            a, b = max(0, int(a)), min(int(b), nlines)
+        except (TypeError, ValueError):
+            continue
+        if b <= a:
+            continue
+        s, e = a + 1, b
+        if out and s <= out[-1][1] + 1:
+            out[-1][1] = max(out[-1][1], e)
+        else:
+            out.append([s, e])
+    return out
+
 def _cell_link_html(body, target, alias):
     """首页/总览正文表格的“整格精确匹配”自动链接（opts.overview_links 启用时调用）。
 
@@ -607,19 +635,25 @@ def _cell_link_html(body, target, alias):
         return f'{m.group(1)}<a href="{f}">{m.group(2)}</a></td>'
     return re.sub(r"(<td[^>]*>)(.*?)</td>", repl, body, flags=re.I | re.S)
 
-def build_site(md_path, out_dir=None, doc_title=None, log=print, opts=None):
+def build_site(md_path, out_dir=None, doc_title=None, log=print, opts=None, md_text=None):
     """生成站点。opts（可选 dict，均默认关闭，保持旧行为逐字节一致）：
       route:          [{title, role:overview|appendix, match:exact|prefix}] 栏目规则表；
       overview_links: True 时对首页正文表格做整格匹配自动链接模块页；
-      alias:          {单元格显示文本: 模块标题} 总览表别名映射。"""
+      alias:          {单元格显示文本: 模块标题} 总览表别名映射。
+
+    md_text（可选）：直接给正文，跳过读盘。md_path 仍用于推导默认输出目录与
+    解析图片等相对资源 —— Web 界面的「实时预览」走这条：编辑缓冲区 + 真实源路径，
+    预览产物写临时目录，不污染用户输出目录。"""
     opts = opts or {}
     route = list(opts.get("route") or [])
     overview_links = bool(opts.get("overview_links"))
     alias = dict(opts.get("alias") or {})
+    group_pages = bool(opts.get("group_pages"))
     md_path = pathlib.Path(md_path)
-    if not md_path.exists():
-        raise FileNotFoundError(f"找不到源文档: {md_path}")
-    md_text = md_path.read_text(encoding="utf-8")
+    if md_text is None:
+        if not md_path.exists():
+            raise FileNotFoundError(f"找不到源文档: {md_path}")
+        md_text = md_path.read_text(encoding="utf-8")
     model = build_model(md_text, doc_title, route)
     if doc_title:
         model["title"] = clean_title(doc_title)
@@ -669,27 +703,42 @@ def build_site(md_path, out_dir=None, doc_title=None, log=print, opts=None):
                 parts.append(body)
         return "\n".join(parts)
 
+    def ov_block(html, cls="page-ov"):
+        """总览节的包裹层：给「总览标题」一套独立于模块标题的样式钩子。"""
+        return f'<div class="{cls}">{html}</div>' if html else ""
+
     # ---- 首页 ----
     excls = model["overview_excludes"] or []
     ov_ranges = _clip(*model["overview"], excls)
-    ov_body = convert_ranges(ov_ranges) if ov_ranges else ""
+    ov_body = ov_block(convert_ranges(ov_ranges)) if ov_ranges else ""
+    index_ranges = list(ov_ranges)      # 首页由哪些源行拼成（供编辑器底纹）
     # 全局总览节（组已被折叠/无分组文档的 overview 角色节）：放导语之后、卡片之前
     extra_top = ""
     if model["overview_sections"]:
         kept = {g["title"] for g in model["groups"]}
         glob = [s for s in model["overview_sections"] if s["group"] not in kept]
         if glob:
-            extra_top = convert_ranges([(s["start"], s["end"]) for s in glob])
+            extra_top = ov_block(convert_ranges([(s["start"], s["end"]) for s in glob]))
+            index_ranges += [(s["start"], s["end"]) for s in glob]
+
+    # ---- 分组：默认铺在首页；group_pages 时每组独立成页 ----
+    group_files = {}
+    if group_pages and model["groups"]:
+        for g in model["groups"]:
+            group_files[g["title"]] = uniq("g-" + (slugify(g["title"]) or "group")) + ".html"
+        model["group_files"] = group_files      # make_nav 据此在目录里加「概览」入口
+
+    group_specs = []
     cards_html = ""
+    group_blocks = 0
     if model["groups"]:
         for g in model["groups"]:
             gmods = [m for m in model["mods"] if m["group"] == g["title"]]
-            if not gmods:
-                continue
             # 组内导语：组 h1 之后到组内首个内容标题（overview 节/模块页）之前的文本；
-            # 混在其中的附录节区间扣除，避免与附录页重复
-            intro_b = (model["group_intro_end"].get(g["title"])
-                       if model["strict"] else gmods[0]["start"])
+            # 混在其中的附录节区间扣除，避免与附录页重复。
+            # 没有模块页的组退到组尾（g["end"]），只取导语与组内总览。
+            intro_b = (model["group_intro_end"].get(g["title"]) if model["strict"]
+                       else (gmods[0]["start"] if gmods else g["end"]))
             g_appx = [s for s in model["appendix_sections"]
                       if g["start"] <= s["start"] < intro_b]
             rngs = _clip(g["start"], intro_b, g_appx)
@@ -697,14 +746,34 @@ def build_site(md_path, out_dir=None, doc_title=None, log=print, opts=None):
             intro = ""
             if seg.strip() and not seg.strip().startswith("---"):
                 intro = '<div class="part-intro">' + convert_ranges(rngs) + "</div>"
-            # 组内 overview 角色节 → 组卡片顶部（紧随导语，先于模块卡）
+            # 组内 overview 角色节 → 组块顶部（紧随导语，先于模块卡）
             g_ovs = [s for s in model["overview_sections"] if s["group"] == g["title"]]
-            ov_html = convert_ranges([(s["start"], s["end"]) for s in g_ovs])
+            ov_html = ov_block(convert_ranges([(s["start"], s["end"]) for s in g_ovs]), "part-ov")
             items = "".join(
                 f'<a class="dir-card" href="{m["file"]}"><h4>{_html.escape(m["title"])}</h4></a>'
                 for m in gmods)
-            cards_html += (f'<div class="part-block"><h3>{_html.escape(g["title"])}</h3>{intro}'
-                           f'{ov_html}<div class="dir-grid">{items}</div></div>')
+            # 三者皆空（典型：整组内容都是附录节）就不占版面
+            if not (intro or ov_html or items):
+                continue
+            group_blocks += 1
+            grid = f'<div class="dir-grid">{items}</div>' if items else ""
+            spans = list(rngs) + [(s["start"], s["end"]) for s in g_ovs]
+            if group_pages:
+                group_specs.append({"title": g["title"], "file": group_files[g["title"]],
+                                    "intro": intro, "ov": ov_html, "grid": grid,
+                                    "count": len(gmods), "ranges": spans})
+            else:
+                index_ranges += spans
+                cards_html += (f'<div class="part-block"><h3>{_html.escape(g["title"])}</h3>'
+                               f'{intro}{ov_html}{grid}</div>')
+        if group_pages and group_specs:
+            # 首页只留入口：各组单独一页，避免组多时首页过长
+            entries = "".join(
+                f'<a class="dir-card group-card" href="{s["file"]}">'
+                f'<h4>{_html.escape(s["title"])}</h4>'
+                f'<span class="cnt">{str(s["count"]) + " 个模块" if s["count"] else "仅总览"}</span></a>'
+                for s in group_specs)
+            cards_html = f'<div class="dir-grid">{entries}</div>'
     else:
         items = "".join(
             f'<a class="dir-card" href="{m["file"]}"><h4>{_html.escape(m["title"])}</h4></a>'
@@ -719,43 +788,88 @@ def build_site(md_path, out_dir=None, doc_title=None, log=print, opts=None):
     if overview_links and model["mods"]:
         target = {m["title"]: m["file"] for m in model["mods"]}
         index_body = _cell_link_html(index_body, target, alias)
-    PAGES = {}
-    PAGES["index.html"] = render_page(model, model["title"], "index.html", index_body,
-                                      crumb="总览", out_meta=out_meta)
-    (out_dir / "index.html").write_text(PAGES["index.html"], encoding="utf-8")
 
-    # ---- 模块页 ----
+    # ---- 阅读顺序：首页 → (组页 → 组内模块)… → 附录；上一页/下一页与产物清单都照它 ----
     order = model["mods"]
-    for i, m in enumerate(order):
-        body_html, tokens = convert_seg(m["start"], m["end"])
-        h3s = []
-        def walk(items):
-            for t in items:
-                if t["level"] == 3:
-                    h3s.append(t)
-                walk(t.get("children", []))
-        walk(tokens)
-        chips = "".join(
-            f'<a class="chip" href="#{t["id"]}">{_html.escape(re.sub(r"[`*_]+", "", t.get("name", "")))}</a>'
-            for t in h3s)
-        chips_html = f'<div class="chips">{chips}</div>' if chips else ""
-        prev = order[i - 1] if i > 0 else None
-        nxt = order[i + 1] if i < len(order) - 1 else None
-        prev_t = (prev["title"], prev["file"]) if prev else None
-        nxt_t = (nxt["title"], nxt["file"]) if nxt else None
-        out = render_page(model, m["title"], m["file"], body_html, prev_t, nxt_t,
-                          chips_html, m["group"] or model["title"], out_meta=out_meta)
-        PAGES[m["file"]] = out
-        (out_dir / m["file"]).write_text(out, encoding="utf-8")
-
-    # ---- 附录页（可多节，按文档顺序拼接；旧模式=首「附录…」至文末整节）----
+    mod_by_file = {m["file"]: m for m in order}
+    spec_by_file = {s["file"]: s for s in group_specs}
+    seq = [("总览", "index.html")]
+    for g in model["groups"]:
+        for s in group_specs:
+            if s["title"] == g["title"]:
+                seq.append((s["title"], s["file"]))
+                break
+        for m in order:
+            if m["group"] == g["title"]:
+                seq.append((m["title"], m["file"]))
+    listed = {f for _, f in seq}
+    for m in order:
+        if m["file"] not in listed:
+            seq.append((m["title"], m["file"]))
     if model["appendix_sections"]:
-        app_body = convert_ranges([(s["start"], s["end"]) for s in model["appendix_sections"]])
-        app_html = render_page(model, model["appendix"]["title"], "appendix.html", app_body,
-                               (order[-1]["title"], order[-1]["file"]) if order else None,
-                               None, crumb="附录", out_meta=out_meta)
-        PAGES["appendix.html"] = app_html
-        (out_dir / "appendix.html").write_text(app_html, encoding="utf-8")
+        seq.append(("附录", "appendix.html"))
+    pos = {f: i for i, (_, f) in enumerate(seq)}
+
+    def nb(file):
+        i = pos.get(file)
+        if i is None:
+            return None, None
+        return (seq[i - 1] if i > 0 else None), (seq[i + 1] if i + 1 < len(seq) else None)
+
+    PAGES = {}
+    prev_t, nxt_t = nb("index.html")
+    PAGES["index.html"] = render_page(model, model["title"], "index.html", index_body,
+                                      prev_t, nxt_t, crumb="总览", out_meta=out_meta)
+    (out_dir / "index.html").write_text(PAGES["index.html"], encoding="utf-8")
+    # 产物清单：Web 界面的「产物」面板与预览页签直接消费（只读描述，不影响生成结果）
+    # ranges = 这一页由源文档的哪些行拼成（1-based 闭区间），编辑器据此涂底纹。
+    nlines = len(model["lines"])
+    page_list = [{"file": "index.html", "title": model["title"], "group": "", "kind": "index",
+                  "ranges": _spans(index_ranges, nlines)}]
+
+    # ---- 其余页面按阅读顺序渲染 ----
+    for ptitle, pfile in seq[1:]:
+        prev_t, nxt_t = nb(pfile)
+        if pfile == "appendix.html":
+            app_body = convert_ranges([(s["start"], s["end"])
+                                       for s in model["appendix_sections"]])
+            out = render_page(model, model["appendix"]["title"], pfile, app_body,
+                              prev_t, nxt_t, crumb="附录", out_meta=out_meta)
+            page_list.append({"file": pfile, "title": model["appendix"]["title"],
+                              "group": "附录", "kind": "appendix",
+                              "ranges": _spans([(s["start"], s["end"])
+                                                for s in model["appendix_sections"]], nlines)})
+        elif pfile in spec_by_file:
+            spec = spec_by_file[pfile]
+            body = (f'<h2 id="{slugify(spec["title"]) or "group"}">{_html.escape(spec["title"])}</h2>'
+                    + spec["intro"] + spec["ov"] + spec["grid"])
+            out = render_page(model, spec["title"], pfile, body, prev_t, nxt_t,
+                              crumb=model["title"], out_meta=out_meta)
+            page_list.append({"file": pfile, "title": spec["title"], "group": "",
+                              "kind": "group", "ranges": _spans(spec["ranges"], nlines)})
+        else:
+            m = mod_by_file[pfile]
+            body_html, tokens = convert_seg(m["start"], m["end"])
+            h3s = []
+
+            def walk(items):
+                for t in items:
+                    if t["level"] == 3:
+                        h3s.append(t)
+                    walk(t.get("children", []))
+
+            walk(tokens)
+            chips = "".join(
+                f'<a class="chip" href="#{t["id"]}">{_html.escape(re.sub(r"[`*_]+", "", t.get("name", "")))}</a>'
+                for t in h3s)
+            chips_html = f'<div class="chips">{chips}</div>' if chips else ""
+            out = render_page(model, m["title"], pfile, body_html, prev_t, nxt_t,
+                              chips_html, m["group"] or model["title"], out_meta=out_meta)
+            page_list.append({"file": pfile, "title": m["title"], "group": m["group"],
+                              "kind": "module",
+                              "ranges": _spans([(m["start"], m["end"])], nlines)})
+        PAGES[pfile] = out
+        (out_dir / pfile).write_text(out, encoding="utf-8")
 
     # ---- 跨页搜索索引 ----
     def _txt(frag):
@@ -764,9 +878,14 @@ def build_site(md_path, out_dir=None, doc_title=None, log=print, opts=None):
         frag = _html.unescape(frag)
         return re.sub(r"\s+", " ", frag).strip()[:2000]
     idx = []
-    for fname, meta in [("index.html", (model["title"], model["title"]))] + \
-                        [(m["file"], (m["title"], m["group"] or model["title"])) for m in order] + \
-                        ([("appendix.html", ("附录", "附录"))] if model["appendix_sections"] else []):
+    for pg in page_list:
+        fname = pg["file"]
+        if pg["kind"] == "module":
+            meta = (pg["title"], pg["group"] or model["title"])
+        elif pg["kind"] == "appendix":
+            meta = ("附录", "附录")
+        else:
+            meta = (pg["title"], model["title"])
         s = PAGES[fname]
         art = re.search(r"<article[^>]*>(.*?)</article>", s, re.S)
         body = art.group(1) if art else ""
@@ -798,13 +917,14 @@ def build_site(md_path, out_dir=None, doc_title=None, log=print, opts=None):
         for p in shown:
             log(f"    - {p}")
     return {"dir": str(out_dir), "pages": len(PAGES), "modules": len(order),
-            "groups": len(model["groups"]) or (1 if model["mods"] else 0),
+            "groups": group_blocks or (1 if model["mods"] else 0),
             "appendix": bool(model["appendix"]), "title": model["title"],
             "index_kb": round(len(js.encode("utf-8")) / 1024),
             "assets_copied": col.copied, "assets_missing": len(col._missing),
             "strict": bool(model["strict"]),
             "overview_sections": len(model["overview_sections"]),
-            "appendix_sections": len(model["appendix_sections"])}
+            "appendix_sections": len(model["appendix_sections"]),
+            "page_list": page_list}
 
 # ---------- CLI ----------
 def main(argv=None):
@@ -814,10 +934,17 @@ def main(argv=None):
     ap.add_argument("--title", help="站点标题（默认取首个 `#` 标题）")
     ap.add_argument("--overview-links", action="store_true",
                     help="把首页正文表格里整格精确匹配模块标题（或 --alias 别名）的单元格改为指向模块页的链接")
+    ap.add_argument("--group-pages", action="store_true",
+                    help="分组独立成页：每组单独一页（含该组导语、组内总览与模块卡片），"
+                         "首页只保留全篇总览与各组入口，避免组多时首页过长")
     ap.add_argument("--route", action="append", metavar="规则",
                     help="栏目规则，可多次：`标题=overview` / `标题=appendix`（精确）或 `前缀*=overview` / `前缀*=appendix`")
     ap.add_argument("--alias", action="append", metavar="映射",
                     help="总览表别名映射，可多次：`单元格显示文本=模块标题`（配合 --overview-links）")
+    ap.add_argument("--text-from", metavar="文件", dest="text_from",
+                    help="从该文件读正文（源 md 路径仍用于推导默认输出目录与图片等相对资源）；供预览调用")
+    ap.add_argument("--json", action="store_true",
+                    help="结束时额外打印一行 `##RESULT##{...}` 机器可读结果（供 Web 后端解析）")
     a = ap.parse_args(argv)
     opts = {}
     if a.route:
@@ -839,12 +966,19 @@ def main(argv=None):
         opts["alias"] = alias
     if a.overview_links:
         opts["overview_links"] = True
-    r = build_site(a.md, a.out, a.title, opts=opts)
+    if a.group_pages:
+        opts["group_pages"] = True
+    md_text = None
+    if a.text_from:
+        md_text = pathlib.Path(a.text_from).read_text(encoding="utf-8")
+    r = build_site(a.md, a.out, a.title, opts=opts, md_text=md_text)
     extra = (f" | 严格模式: {r['strict']} | 总览节: {r['overview_sections']} | "
              f"附录节: {r['appendix_sections']}") if r["strict"] else ""
     print(f"生成: {r['dir']} | 页面: {r['pages']} | 模块: {r['modules']} | "
           f"分组: {r['groups']} | 附录: {r['appendix']} | 索引: {r['index_kb']} KB | "
           f"资源: 拷贝 {r['assets_copied']} / 缺失 {r['assets_missing']}{extra}")
+    if a.json:
+        print("##RESULT##" + json.dumps(r, ensure_ascii=False))
     return r
 
 if __name__ == "__main__":

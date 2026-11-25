@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Markpage</title>
+<!-- 应用图标：窗口/任务栏取自这个 favicon（Edge 的 --app 窗口同样生效） -->
+<link rel="icon" type="image/svg+xml" href="static/icon.svg">
+<link rel="icon" type="image/x-icon" href="static/icon.ico">
+<link rel="stylesheet" href="static/app.css">
+</head>
+<body>
+
+<header class="top">
+  <div class="brand">Markpage</div>
+  <button class="src-btn" id="btnSource" title="选择 Markdown 文件"><span id="srcName">选择 Markdown 文件…</span></button>
+  <span class="badge" id="dirty" hidden>未保存</span>
+  <div class="spacer"></div>
+  <div class="menu-wrap">
+    <button class="btn ghost" id="btnRecent" title="最近打开过的文档">最近文件</button>
+    <div class="menu" id="recentMenu" hidden></div>
+  </div>
+  <button class="btn ghost" id="btnOptions">站点选项</button>
+  <button class="btn ghost" id="btnCancel" hidden>取消</button>
+  <button class="btn primary" id="btnBuild" title="Ctrl+Enter">生成站点</button>
+</header>
+
+<main class="layout" id="layout">
+  <aside class="outline" id="outline">
+    <div class="outline-head">结构</div>
+    <div class="outline-body" id="outlineBody">
+      <p class="ph">选择一份 md 后，这里显示它的分组、模块与附录结构。</p>
+    </div>
+    <div class="outline-foot">改角色 → 右栏「结构」页签</div>
+  </aside>
+
+  <section class="center" id="center">
+    <div class="pane editor-pane" id="editorPane">
+      <div class="pane-head">
+        <span class="ptitle">编辑</span>
+        <span class="pmeta" id="editorMeta"></span>
+        <div class="spacer"></div>
+        <button class="btn tiny" id="btnSave" title="Ctrl+S">保存</button>
+      </div>
+      <div class="editor-wrap">
+        <div class="gutter" id="gutter">1</div>
+        <div class="code-area">
+          <div class="hl-layer" id="hlLayer"><div class="hl-inner" id="hlInner"></div></div>
+          <textarea id="editor" spellcheck="false" wrap="off" placeholder="选择或拖入一份 .md 文件后在此编辑…"></textarea>
+        </div>
+      </div>
+    </div>
+
+    <div class="splitter" id="splitter" title="拖动调整宽度"></div>
+
+    <div class="pane preview-pane">
+      <div class="pane-head">
+        <span class="ptitle">预览</span>
+        <select id="pageSel" class="mini" hidden></select>
+        <span class="pmeta" id="previewMeta"></span>
+        <div class="spacer"></div>
+        <button class="btn tiny on" data-width="desktop">桌面</button>
+        <button class="btn tiny" data-width="mobile">手机</button>
+        <button class="btn tiny" id="btnTheme" title="切换预览主题">深色</button>
+        <button class="btn tiny" id="btnPop" title="在新窗口打开预览">↗</button>
+      </div>
+      <div class="preview-stage" id="stage">
+        <div class="frame-empty" id="frameEmpty">还没有预览内容。<br>选择 md 后，编辑时这里会实时更新。</div>
+        <iframe id="frame" title="站点预览" hidden></iframe>
+      </div>
+    </div>
+  </section>
+
+  <aside class="panel">
+    <div class="tabs">
+      <button class="tab on" data-tab="build">构建</button>
+      <button class="tab" data-tab="struct">结构</button>
+      <button class="tab" data-tab="lint">检查<span class="tab-badge" id="lintBadge" hidden></span></button>
+      <button class="tab" data-tab="files">产物</button>
+    </div>
+    <div class="tabbody" data-body="build">
+      <div class="log" id="log"><div class="l info">就绪。</div></div>
+      <div class="stats" id="stats" hidden></div>
+    </div>
+    <div class="tabbody" data-body="struct" hidden>
+      <div class="roles" id="roles">
+        <p class="ph">打开一份 md 后，这里列出它的每个二级标题，以及各自在站点里的角色。</p>
+      </div>
+    </div>
+    <div class="tabbody" data-body="lint" hidden>
+      <div class="lint" id="lintItems">
+        <p class="ph">改完点「重新检查」，这里会列出结构上的问题——每条都能点，点了跳到源文档对应行。</p>
+      </div>
+      <div class="panel-foot">
+        <button class="btn tiny" id="btnLint">重新检查</button>
+        <span class="lint-sum" id="lintSum"></span>
+      </div>
+    </div>
+    <div class="tabbody" data-body="files" hidden>
+      <div class="files" id="files"><p class="ph">生成后在这里列出所有页面，点一下即可在左侧预览打开。</p></div>
+      <div class="panel-foot">
+        <button class="btn tiny" id="btnOpenDir">打开目录</button>
+        <button class="btn tiny" id="btnOpenSite">浏览器打开</button>
+        <button class="btn tiny" id="btnZip">打包 zip</button>
+        <button class="btn tiny" id="btnClean">清理</button>
+      </div>
+    </div>
+  </aside>
+</main>
+
+<dialog class="dlg" id="dlgPicker">
+  <div class="dlg-head"><span id="pickerTitle">选择文件</span><div class="spacer"></div>
+    <button class="btn tiny" id="pickerClose">关闭</button></div>
+  <div class="dlg-body">
+    <div class="drives" id="pickerDrives"></div>
+    <div class="quick" id="pickerQuick"></div>
+    <div class="crumbs" id="pickerCrumbs"></div>
+    <div class="lister" id="pickerList"></div>
+  </div>
+  <div class="dlg-foot">
+    <input class="fpath" id="pickerPath" placeholder="也可以直接粘贴完整路径后回车">
+    <button class="btn primary" id="pickerOk">选定</button>
+  </div>
+</dialog>
+
+<dialog class="dlg dlg-s" id="dlgConfirm">
+  <div class="dlg-head"><span id="confirmTitle">请确认</span></div>
+  <div class="dlg-body"><p class="confirm-msg" id="confirmMsg"></p></div>
+  <div class="dlg-foot"><div class="spacer"></div>
+    <button class="btn" id="confirmCancel">取消</button>
+    <button class="btn primary" id="confirmOk">确定</button></div>
+</dialog>
+
+<dialog class="dlg" id="dlgOptions">
+  <div class="dlg-head">站点选项<div class="spacer"></div>
+    <button class="btn tiny" id="optClose">关闭</button></div>
+  <div class="dlg-body">
+    <div class="fld">
+      <label>输出位置（默认：当前 md 所在目录）</label>
+      <div class="frow">
+        <input type="text" id="optOutBase" placeholder="留空 = 当前 md 所在目录">
+        <button class="btn" id="optPickOut">浏览…</button>
+      </div>
+    </div>
+    <div class="fld">
+      <label class="chk"><input type="checkbox" id="optSubdir" checked>
+        <span>生成到子目录（同一目录下放多份文档时请各起一个名字，否则会互相覆盖）</span></label>
+      <div class="frow subdir-row" id="optSubdirRow">
+        <input type="text" id="optSubdirName" value="site" placeholder="site">
+      </div>
+    </div>
+    <p class="hint" id="optOutPreview"></p>
+    <div class="fld">
+      <label>站点标题</label>
+      <div class="frow"><input type="text" id="optTitle" placeholder="留空 = 取文档里第一个一级标题"></div>
+    </div>
+    <div class="fld">
+      <label class="chk"><input type="checkbox" id="optOvLinks">
+        <span>总览表自动链接：首页表格里整格写着某个模块标题的单元格，自动变成通往该模块页的链接</span></label>
+    </div>
+    <div class="fld">
+      <label class="chk"><input type="checkbox" id="optGroupPages">
+        <span>分组独立成页：每个一级标题（分组）单独一页，页面里放该组的导语、组内总览和模块卡片；
+          首页只保留全篇总览与各组入口 —— 组多时首页不会过长</span></label>
+    </div>
+    <div class="fld">
+      <label>名字对不上号时就配在这里（左边＝表格里的写法，右边＝要跳到哪个模块页）</label>
+      <div class="alias-list" id="aliasRows"></div>
+      <button class="btn tiny" id="btnAliasAdd">+ 添加一行</button>
+    </div>
+    <details class="adv">
+      <summary>高级：直接写规则文本（一般用不到）</summary>
+      <div class="two">
+        <div class="fld">
+          <label>栏目规则（每行 <code>标题=overview|appendix</code>，前缀用 <code>前缀*=…</code>）</label>
+          <textarea class="opt" id="optRoute" placeholder="组件总览=overview&#10;附录*=appendix"></textarea>
+        </div>
+        <div class="fld">
+          <label>总览表别名（每行 <code>表格显示名=模块标题</code>）</label>
+          <textarea class="opt" id="optAlias" placeholder="StoryView（TMP）=StoryView（TMP 表现层）"></textarea>
+        </div>
+      </div>
+      <p class="hint">更省事的做法：右栏「结构」里直接点选每个二级标题的角色，界面会把标记写回源文档行尾，
+        优先级高于这里的规则表。</p>
+    </details>
+  </div>
+  <div class="dlg-foot"><div class="spacer"></div>
+    <button class="btn primary" id="optDone">完成</button></div>
+</dialog>
+
+<div id="toast"></div>
+<script type="module" src="static/app.js"></script>
+</body>
+</html>
