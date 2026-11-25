@@ -547,7 +547,7 @@ def render_page(model, page_title, current, body_html, prev=None, nxt=None, chip
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<meta name="generator" content="MicrobialNet Story">
+<meta name="generator" content="Markpage">
 <title>{_html.escape(page_title)} · {_html.escape(model["title"])}</title>
 <link rel="stylesheet" href="site.css">
 <script src="search-index.js"></script></head>

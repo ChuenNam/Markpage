@@ -63,6 +63,8 @@ button{font-family:inherit}
 .btn.tiny.on{background:var(--accent-soft);border-color:var(--accent);color:var(--accent)}
 .btn.ghost{border-color:transparent;background:transparent;color:var(--muted)}
 .btn.ghost:hover{background:var(--hover);color:var(--ink)}
+.btn.danger{color:#c0392b;border-color:#e6b0aa;background:#fff}
+.btn.danger:hover{background:#fdf0ee;border-color:#c0392b}
 
 /* ---------- 菜单 ---------- */
 .menu-wrap{position:relative}

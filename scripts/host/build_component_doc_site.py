@@ -9,13 +9,13 @@
     定位源/输出 + 传站点标题 + 打开总览表链接 + 注入一览表别名，其余全部走引擎。
 
 用法:
-  python scripts/host/build_component_doc_site.py                       # 自动探测宿主包
-  python scripts/host/build_component_doc_site.py --pkg <宿主包根>       # 显式指定
+  python scripts/host/build_component_doc_site.py --pkg <宿主包根>       # 推导 src/out
   python scripts/host/build_component_doc_site.py --src a.md --out 某目录  # 全手动
   环境变量 MARKPAGE_PKG 可代替 --pkg。
 """
 import argparse
 import json
+import os
 import sys
 import pathlib
 
@@ -25,8 +25,8 @@ if str(_SCRIPTS) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS))
 from md_site_builder import build_site  # noqa: E402
 
-# 默认宿主包（开发机探测）：显式 --pkg / MARKPAGE_PKG > 已知开发机路径 > None
-_DEFAULT_PKG = r"D:\Unity\Project\MicrobialNet\MicrobialNextUnityProj\Packages\com.microbialnet.story"
+# 不再内置任何开发机路径：宿主包必须由 --pkg / MARKPAGE_PKG 指定，
+# 或直接用 --src / --out 全手动指定。
 
 # 一览表别名：表格显示名 -> 模块页标题（模块标题即 ## 标题）。
 # 整格文本 == 模块标题的直接命中无需列出；这里只补「显示名 ≠ 模块标题」的行。
@@ -54,18 +54,21 @@ def parse_args(argv=None):
                     help="关闭总览表自动链接（默认开）")
     a = ap.parse_args(argv)
 
-    pkg = a.pkg or __import__("os").environ.get("MARKPAGE_PKG") or ""
-    if not a.src:
-        base = pathlib.Path(pkg) if pkg else pathlib.Path(_DEFAULT_PKG)
+    pkg = a.pkg or os.environ.get("MARKPAGE_PKG") or ""
+    if pkg and not a.src:
+        base = pathlib.Path(pkg)
         a.src = str(base / "Documentation" / "组件API参考" / "组件API参考.md")
-    if not a.out:
-        base = pathlib.Path(pkg) if pkg else pathlib.Path(_DEFAULT_PKG)
+    if pkg and not a.out:
+        base = pathlib.Path(pkg)
         a.out = str(base / "Documentation" / "组件API参考" / "html")
     return a
 
 
 def main(argv=None) -> int:
     a = parse_args(argv)
+    if not a.src:
+        print("!! 请指定 --src，或用 --pkg / MARKPAGE_PKG 让工具推导源文档位置")
+        return 1
     src = pathlib.Path(a.src)
     if not src.is_file():
         print(f"!! 找不到源文档: {src}")

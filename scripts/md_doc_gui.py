@@ -36,7 +36,7 @@ if TOOLS not in sys.path:
 
 from webapp.engine import Engine, quiet_kwargs   # noqa: E402
 from webapp.server import create_server     # noqa: E402
-from webapp.state import State              # noqa: E402
+from webapp.state import State, state_path  # noqa: E402
 
 EDGE_CANDIDATES = [
     r"%ProgramFiles(x86)%\Microsoft\Edge\Application\msedge.exe",
@@ -55,6 +55,78 @@ def resource_root():
 
 def ui_dir():
     return os.path.join(resource_root(), "webapp", "ui")
+
+
+# ---------- 单实例锁 ----------
+# 多份 EXE（dist / releases / Downloads 各解压一份）共用 %LOCALAPPDATA%\Markpage\instance.json。
+# 第二份启动时发现第一份还活着，就只把它的窗口调出来，不再起第二个本地服务。
+
+def _instance_lock():
+    return pathlib.Path(state_path()).with_name("instance.json")
+
+
+def _pid_alive(pid):
+    """探测 PID 是否仍在运行（Windows 用 Win32 API，避免 os.kill(pid,0) 的歧义）。"""
+    try:
+        pid = int(pid)
+    except (TypeError, ValueError):
+        return False
+    if os.name != "nt":
+        try:
+            os.kill(pid, 0)
+            return True
+        except OSError:
+            return False
+    import ctypes
+    k = ctypes.windll.kernel32
+    h = k.OpenProcess(0x1000, False, pid)   # PROCESS_QUERY_LIMITED_INFORMATION
+    if not h:
+        return False
+    try:
+        code = ctypes.c_ulong()
+        if not k.GetExitCodeProcess(h, ctypes.byref(code)):
+            return False
+        return code.value == 259            # STILL_ACTIVE
+    finally:
+        k.CloseHandle(h)
+
+
+def _alive_instance(lock):
+    """锁文件里的进程还活着、且服务确实能访问时，返回该实例信息。"""
+    try:
+        d = json.loads(lock.read_text(encoding="utf-8"))
+        url = d.get("url") or ""
+        if not url or not _pid_alive(d.get("pid")):
+            return None
+        # 根路径会返回 index.html（并把 last_ping 刷新），比 GET /api/ping 更通用
+        with urllib.request.urlopen(url, timeout=2) as r:
+            if r.status != 200:
+                return None
+        return d
+    except Exception:                       # noqa: BLE001
+        return None
+
+
+def _clear_lock(lock, pid):
+    try:
+        d = json.loads(lock.read_text(encoding="utf-8"))
+        if int(d.get("pid", -1)) == int(pid):
+            lock.unlink()
+    except (OSError, ValueError, TypeError):
+        pass
+
+
+def _write_lock(lock, url):
+    try:
+        lock.parent.mkdir(parents=True, exist_ok=True)
+        tmp = lock.with_suffix(".tmp")
+        tmp.write_text(json.dumps({"pid": os.getpid(), "url": url,
+                                   "started": time.time(), "exe": sys.executable},
+                                  ensure_ascii=False), encoding="utf-8")
+        os.replace(tmp, lock)
+    except OSError:
+        return
+    atexit.register(_clear_lock, lock, os.getpid())
 
 
 def _stderr_to_log():
@@ -113,19 +185,26 @@ def start_server(port=0):
     return ctx, httpd, engine
 
 
-def start_watchdog(ctx, httpd, idle=180.0, grace=90.0):
-    """页面关掉后自动退出：界面每 5s 一次心跳，长时间没有心跳就收摊。
+def start_watchdog(ctx, httpd, idle=90.0, grace=5.0):
+    """关窗即退；浏览器崩溃等异常情况则靠心跳超时兜底。
 
-    idle 取 180s 而不是 45s —— 浏览器会把后台标签页的定时器节流到每分钟一次，
-    阈值太靠近就会把正在用的服务误杀。"""
+    - 页面 pagehide 用 sendBeacon 打 /api/bye，5 秒后无新 ping 就 shutdown
+      （留这 5 秒是给「刷新」用：新页面重新 ping 会清掉 bye 标记）。
+    - 没有 bye 时按心跳超时收摊。idle 取 90s 而不是 45s —— 后台标签页的
+      定时器会被节流到约每分钟一次，阈值太靠近会误杀正在用的服务。
+    """
     def loop():
         while True:
-            time.sleep(10)
-            if time.time() - ctx.started < grace:
+            time.sleep(2)
+            now = time.time()
+            if now - ctx.started < grace:
                 continue
-            if time.time() - ctx.last_ping > idle:
-                httpd.shutdown()
-                return
+            bye = getattr(ctx, "close_requested_at", 0.0)
+            if bye and now - bye > 5 and ctx.last_ping <= bye:
+                break
+            if now - ctx.last_ping > idle:
+                break
+        httpd.shutdown()
 
     threading.Thread(target=loop, daemon=True).start()
 
@@ -228,12 +307,23 @@ def main(argv=None):
     ap.add_argument("--no-exit", action="store_true", help="页面关闭后不退出进程")
     args = ap.parse_args(argv)
 
+    # 已有实例就直接复用，绝不再起第二个本地服务（多份 EXE 共用同一把锁）
+    lock = _instance_lock()
+    old = _alive_instance(lock)
+    if old:
+        url = old.get("url") or ""
+        print(f"Markpage 已在运行，打开已有窗口：{url}")
+        if not args.no_browser:
+            open_app_window(url, args.browser)
+        return 0
+
     ctx, httpd, engine = start_server(port=args.port)
     if args.md:
         md = os.path.abspath(args.md)
         if os.path.isfile(md):
             ctx.state.patch({"last_path": md})
     url = f"http://127.0.0.1:{ctx.port}/s/{ctx.token}/"
+    _write_lock(lock, url)
 
     if not args.no_browser:
         open_app_window(url, args.browser)

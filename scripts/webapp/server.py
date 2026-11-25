@@ -21,6 +21,7 @@
   POST /api/open                 打开站点 / 输出目录 / 文件
   GET  /api/state  POST          界面状态（最近文件、按文档记忆的选项）
   POST /api/ping                 心跳（页面关闭后服务端自动退出，见 launcher）
+  POST /api/reset-data           清理本机保存的数据（需 confirm）
 """
 import json
 import mimetypes
@@ -28,6 +29,8 @@ import os
 import pathlib
 import re
 import shutil
+import sys
+import tempfile
 import threading
 import time
 import urllib.parse
@@ -36,6 +39,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from . import shortcuts as shortcuts_store
 from .lint import lint as run_lint
+from .state import state_path
 
 MIME = {
     ".html": "text/html; charset=utf-8",
@@ -56,6 +60,45 @@ MIME = {
     ".txt": "text/plain; charset=utf-8",
     ".map": "application/json; charset=utf-8",
 }
+
+
+def clear_saved_data(ctx):
+    """清理缓存按钮：删掉本机持久数据，返回被处理的文件名。
+
+    运行锁 instance.json 不算用户数据，清完立刻按当前实例重写，
+    否则单实例保护会失效。日志文件被当前进程打开，Windows 下删不掉，改为清空。
+    """
+    base = pathlib.Path(state_path()).parent
+    touched = []
+    if base.is_dir():
+        for p in sorted(base.iterdir()):
+            if not p.is_file() or p.name == "instance.json":
+                continue
+            try:
+                if p.name == "markpage.log":
+                    p.write_text("", encoding="utf-8")
+                else:
+                    p.unlink()
+                touched.append(p.name)
+            except OSError:
+                pass
+    ctx.state.reset()
+    try:
+        (base / "instance.json").write_text(
+            json.dumps({"pid": os.getpid(), "url": ctx.url(),
+                        "started": time.time(), "exe": sys.executable},
+                       ensure_ascii=False), encoding="utf-8")
+    except OSError:
+        pass
+    # 只清其它会话遗留的临时预览目录，当前正在用的不动
+    try:
+        cur = pathlib.Path(ctx.preview_dir).resolve()
+        for p in pathlib.Path(tempfile.gettempdir()).glob("markpage-prev-*"):
+            if p.is_dir() and p.resolve() != cur:
+                shutil.rmtree(p, ignore_errors=True)
+    except OSError:
+        pass
+    return touched
 
 
 # ---------- 站点选项文本解析（与 CLI 语法一致，校验失败给中文提示） ----------
@@ -220,6 +263,7 @@ class Ctx:
         self.build_lock = threading.Lock()
         self.cancel_event = None
         self.last_ping = time.time()
+        self.close_requested_at = 0.0   # 页面 pagehide 主动告别；刷新后 ping 会清掉
         self.started = time.time()
 
     def default_out(self, md_path):
@@ -426,10 +470,20 @@ def _make_handler(ctx):
                     return self._json({"ok": True, "state": ctx.state.patch(body or {})})
                 if name == "ping":
                     ctx.last_ping = time.time()
+                    ctx.close_requested_at = 0.0   # 刷新/重新打开：取消待退出
+                    return self._json({"ok": True})
+                if name == "bye":
+                    # 页面 pagehide（关窗）时由 sendBeacon 告知；不立即 shutdown，
+                    # 留 5 秒给刷新后的新页面 ping 取消，避免误杀。
+                    ctx.close_requested_at = time.time()
                     return self._json({"ok": True})
                 if name == "remember":
                     ctx.state.remember(body.get("path") or "", body.get("project"))
                     return self._json({"ok": True, "state": ctx.state.snapshot()})
+                if name == "reset-data":
+                    if not body.get("confirm"):
+                        return self._json({"ok": False, "error": "需要确认才能清理缓存"})
+                    return self._json({"ok": True, "removed": clear_saved_data(ctx)})
             except ValueError as e:
                 return self._json({"ok": False, "error": str(e)})
             except Exception as e:                       # noqa: BLE001

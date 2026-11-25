@@ -1113,6 +1113,20 @@ function bindUI() {
     $("dlgOptions").showModal();
   };  $("optClose").onclick = () => $("dlgOptions").close();
   $("optDone").onclick = () => $("dlgOptions").close();
+  $("btnClearData").onclick = async () => {
+    const ok = await confirmDialog(
+      "将删除本机保存的全部数据：\n最近文件、按文档记住的选项、目录快捷入口、运行日志与临时预览。\n\n" +
+      "快捷入口下次会自动恢复为系统默认；此操作不可恢复。",
+      { title: "清理缓存数据", ok: "清理" });
+    if (!ok) return;
+    const r = await post("reset-data", { confirm: true }).catch((e) => ({ ok: false, error: e.message }));
+    if (!r.ok) { toast(r.error || "清理失败"); return; }
+    S.recent = [];
+    S.projects = {};
+    S.lastDir = "";
+    renderRecent();
+    toast("已清理本机保存的数据");
+  };
   $("optPickOut").onclick = async () => {
     const p = await picker.open("dir", $("optOutBase").value.trim() || S.lastDir || "");
     if (p) {
@@ -1217,6 +1231,11 @@ function bindUI() {
       e.preventDefault();
       e.returnValue = "";
     }
+  });
+
+  // 关窗即退：sendBeacon 在页面卸载时仍可靠送达；刷新后的新页面会 ping 取消退出。
+  window.addEventListener("pagehide", () => {
+    try { navigator.sendBeacon("api/bye", ""); } catch (_) { /* 忽略 */ }
   });
 
   // 拖入 .md：浏览器出于安全不给绝对路径，只能用「上次目录 + 同名 + 内容一致」来认它

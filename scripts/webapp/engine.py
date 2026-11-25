@@ -73,7 +73,6 @@ class Engine:
             os.path.join(self.tools_dir, "..", ".venv", "Scripts", "python.exe"),
             os.path.join(self.tools_dir, "..", "venv", "Scripts", "python.exe"),
             os.path.expandvars(r"%LOCALAPPDATA%\Programs\Python\Python311\python.exe"),
-            r"C:\Users\Lenovo\.workbuddy\binaries\python\envs\default\Scripts\python.exe",
             sys.executable,
         ]
         seen = set()

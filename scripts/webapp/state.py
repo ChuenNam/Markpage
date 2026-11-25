@@ -48,6 +48,15 @@ class State:
             base["projects"] = {}
         return base
 
+    def reset(self):
+        """清空内存状态并删掉状态文件（清理缓存按钮用）。"""
+        self.data = self._blank()
+        try:
+            if self.path.exists():
+                self.path.unlink()
+        except OSError:
+            pass
+
     def save(self):
         try:
             self.path.parent.mkdir(parents=True, exist_ok=True)
